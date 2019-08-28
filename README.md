@@ -65,7 +65,7 @@ on Flint2 to efficiently factor polynomials.  This requires additional C
 libraries and headers to be installed for the server to compile and link
 against.  On Ubuntu 18.04:
 
-  $ sudo apt-get install libflint-dev libmpfr
+  $ sudo apt-get install libflint-dev libmpfr-dev
 
 ## License
 

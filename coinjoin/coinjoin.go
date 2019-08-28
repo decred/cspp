@@ -247,9 +247,7 @@ func (t *Tx) Join(unmixed []byte, pid int) error {
 		t.inputPids = append(t.inputPids, pid)
 		tx.TxIn = append(tx.TxIn, in)
 	}
-	for _, out := range other.TxOut {
-		tx.TxOut = append(tx.TxOut, out)
-	}
+	tx.TxOut = append(tx.TxOut, other.TxOut...)
 	return nil
 }
 
