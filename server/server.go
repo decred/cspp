@@ -382,8 +382,9 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				totalMessages += clients[i].pr.MessageCount
 			}
 			sid := s.sidPRNG.Next(32)
+			pairCommitment := []byte(commitment)
 			newm := func() Mixer {
-				mix, err := s.newm([]byte(commitment))
+				mix, err := s.newm(pairCommitment)
 				if err != nil {
 					// newm has been confirmed to not error with this input
 					log.Panicf("newm: %v", err)
