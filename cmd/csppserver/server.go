@@ -46,8 +46,8 @@ func defaultDcrdCA() string {
 
 var (
 	fs           = flag.NewFlagSet("", flag.ExitOnError)
-	lisFlag      = fs.String("lis", "127.0.0.1:15760,[::1]:15760", "comma-separated listen addresses of CoinShuffle++ server")
-	portFlag     = fs.String("port", "15760", "alternate external port of CoinShuffle++ server")
+	lisFlag      = fs.String("lis", "127.0.0.1:5760,[::1]:5760", "comma-separated listen addresses of CoinShuffle++ server")
+	portFlag     = fs.String("port", "5760", "alternate external port of CoinShuffle++ server")
 	tlsFlag      = fs.String("tls", "", "(required) auto=domain to use LetsEncrypt (will bind to -acme) or manual=cert,key")
 	acmeFlag     = fs.String("acme", ":80", "listen interface for ACME challenge; must be reachable at port 80 from internet")
 	httpFlag     = fs.String("http", "", "listen address for public webserver (no TLS)")
