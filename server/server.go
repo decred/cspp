@@ -621,10 +621,6 @@ func (s *session) doRun(ctx context.Context) error {
 		}
 	}
 	s.mu.Unlock()
-	if err != nil {
-		close(blaming)
-		return s.blame(ctx, nil)
-	}
 	s.roots = roots
 
 	// Wait for all DC messages, or DC timeout.

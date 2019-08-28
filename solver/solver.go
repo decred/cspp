@@ -1,7 +1,8 @@
 package solver
 
 /*
-#cgo LDFLAGS: -lflint -lmpfr
+#cgo CFLAGS: -I/usr/local/include
+#cgo LDFLAGS: -L/usr/local/lib -lflint -lmpfr
 #include <stdlib.h>
 #include <flint/flint.h>
 #include <flint/fmpz_mod_poly.h>
