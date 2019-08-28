@@ -30,7 +30,7 @@ import (
 const MessageSize = 20
 
 const (
-	sendTimeout = time.Second
+	sendTimeout = 5 * time.Second
 	recvTimeout = 10 * time.Second
 )
 
