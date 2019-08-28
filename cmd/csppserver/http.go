@@ -83,7 +83,7 @@ buy more tickets from the mixed account as outputs mature:</p>
 
 <pre>
 $ dcrwallet {{template "service-config" .}} \
-  --enableticketbuyer --purchaseaccount=mixed --mixaccount=mixed/1 \
+  --enableticketbuyer --purchaseaccount=mixed --mixedaccount=mixed/1 \
   --changeaccount=unmixed --ticketbuyer.votingaccount=voting --mixchange
 </pre>
 
@@ -112,7 +112,7 @@ to the mixer in a request.
 
 <pre>
 $ dcrwallet {{template "service-config" .}} \
-  --mixaccount=mixed/1 --changeaccount=unmixed --mixchange
+  --mixedaccount=mixed/1 --changeaccount=unmixed --mixchange
 </pre>
 
 <p>Alternatively, the <code>mixaccount</code> JSON-RPC may be used instead of
