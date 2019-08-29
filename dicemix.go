@@ -31,7 +31,7 @@ const MessageSize = 20
 
 const (
 	sendTimeout = 5 * time.Second
-	recvTimeout = 10 * time.Second
+	recvTimeout = 20 * time.Second
 )
 
 // GenConfirmer is a generator of fresh messages to mix in a DiceMix run and a
