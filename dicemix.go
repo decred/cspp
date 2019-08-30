@@ -110,7 +110,7 @@ func (c *client) send(msg interface{}, timeout time.Duration) (err error) {
 		if err != nil {
 			_, file, line, _ := runtime.Caller(2)
 			file = filepath.Base(file)
-			err = fmt.Errorf("send %T (%v:%v): %v", msg, file, line, err)
+			err = fmt.Errorf("%v: send %T (%v:%v): %v", c.conn.LocalAddr(), msg, file, line, err)
 		}
 	}()
 	c.conn.SetWriteDeadline(time.Now().Add(timeout))
@@ -131,7 +131,7 @@ func (c *client) recv(out interface{}, timeout time.Duration) error {
 	if err != nil {
 		_, file, line, _ := runtime.Caller(1)
 		file = filepath.Base(file)
-		return fmt.Errorf("read %T (%v:%v): %v", out, file, line, err)
+		return fmt.Errorf("%v: read %T (%v:%v): %v", c.conn.LocalAddr(), out, file, line, err)
 	}
 	return nil
 }
