@@ -197,6 +197,7 @@ func (s *Server) Run(ctx context.Context, lis net.Listener) error {
 				wg.Wait()
 				return err
 			}
+			log.Printf("serving %s", conn.RemoteAddr())
 			ctx, task := trace.NewTask(ctx, "serveConn")
 			wg.Add(1)
 			go func() {
