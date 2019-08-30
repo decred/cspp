@@ -686,9 +686,9 @@ func (s *session) doRun(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.allConfs:
-		log.Print("received all confirmations")
+		log.Print("received all CM messages")
 	case <-time.After(recvTimeout):
-		log.Print("confirmation timeout")
+		log.Print("CM timeout")
 	}
 
 	s.mu.Lock()
