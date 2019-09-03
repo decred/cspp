@@ -142,8 +142,8 @@ Note these differences:
   the mixed account and branch will be used derive a fresh address for the mix.
   However, this would create issues when publishing a ticket, because the unmixed
   wallet does not have the required private key (mixed account is an imported xpub).
-  This option must be set to a derived account with private keys, preferably the
-  same account being used to fund mixes for purchased tickets.
+  This option must be set to a derived account with private keys, such as the
+  purchasing source account.
   </li>
 </ul>
 
