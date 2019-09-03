@@ -132,7 +132,7 @@ Note these differences:
 <ul>
   <li>
   <strong><code>--mixedaccount=mixed/0</code></strong> - The unmixed wallet must
-  use the external (not internal) branch  of the mixed account to avoid address
+  use the external (not internal) branch of the mixed account to avoid address
   reuseage problems arising from two wallets simultaneously deriving from the same
   branch.
   </li>
