@@ -101,11 +101,11 @@ Each ticket buyer must be provisioned with a unique voting xpub:
 voter$ dcrctl --wallet createnewaccount voting1
 voter$ dcrctl --wallet createnewaccount voting2
 voter$ dcrctl --wallet getmasterpubkey voting1
-voting1-xpub
+<em>voting1-xpub</em>
 voter$ dcrctl --wallet getmasterpubkey voting2
-voting2-xpub
-buyer1$ dcrctl --wallet importxpub voting voting1-xpub
-buyer2$ dcrctl --wallet importxpub voting voting2-xpub
+<em>voting2-xpub</em>
+buyer1$ dcrctl --wallet importxpub voting <em>voting1-xpub</em>
+buyer2$ dcrctl --wallet importxpub voting <em>voting2-xpub</em>
 </pre>
 
 In addition, the mixed account xpub of the mixed ticket buyer must be imported
@@ -113,8 +113,8 @@ by buyer1:
 
 <pre>
 buyer2$ dcrctl --wallet getmasterpubkey mixed
-mixed-xpub
-buyer1$ dcrctl --wallet importxpub mixed mixed-xpub
+<em>mixed-xpub</em>
+buyer1$ dcrctl --wallet importxpub mixed <em>mixed-xpub</em>
 </pre>
 
 The mixed ticket buying wallet may use the setup from the previous section.  The
