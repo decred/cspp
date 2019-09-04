@@ -70,14 +70,15 @@ type Session struct {
 	Pk ed25519.PublicKey  // Session pubkey
 	Sk ed25519.PrivateKey // Session signing key
 
-	genConf GenConfirmer
-	client  *client
-	sid     []byte
-	vk      []ed25519.PublicKey // session pubkeys
-	kx      []*x25519.KX
-	ecdh    []*x25519.Public
-	mcount  int
-	mtot    int
+	genConf  GenConfirmer
+	freshGen bool // Whether next run must generate fresh SR/DC messages
+	client   *client
+	sid      []byte
+	vk       []ed25519.PublicKey // session pubkeys
+	kx       []*x25519.KX
+	ecdh     []*x25519.Public
+	mcount   int
+	mtot     int
 
 	log        Logger
 	commitment []byte
@@ -274,24 +275,27 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	ses := messages.NewSession(s.sid, n, s.vk)
 
 	r := &run{session: s, run: n}
-	r.srMsg = make([]*big.Int, s.mcount)
-	var err error
-	for i := range r.srMsg {
-		r.srMsg[i], err = rand.Int(rand.Reader, dcnet.F)
+	if n == 0 || s.freshGen {
+		s.freshGen = false
+		r.srMsg = make([]*big.Int, s.mcount)
+		var err error
+		for i := range r.srMsg {
+			r.srMsg[i], err = rand.Int(rand.Reader, dcnet.F)
+			if err != nil {
+				return err
+			}
+		}
+		r.dcMsg, err = s.genConf.Gen()
 		if err != nil {
 			return err
 		}
-	}
-	r.dcMsg, err = s.genConf.Gen()
-	if err != nil {
-		return err
-	}
-	if len(r.dcMsg) != s.mcount {
-		return errors.New("cspp: Gen returned wrong message count")
-	}
-	for _, m := range r.dcMsg {
-		if len(m) != MessageSize {
-			return errors.New("cspp: Gen returned bad message length")
+		if len(r.dcMsg) != s.mcount {
+			return errors.New("cspp: Gen returned wrong message count")
+		}
+		for _, m := range r.dcMsg {
+			if len(m) != MessageSize {
+				return errors.New("cspp: Gen returned bad message length")
+			}
 		}
 	}
 	s.log.Printf("SR msg: %x; DC msg: %x", r.srMsg, r.dcMsg)
@@ -303,7 +307,7 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	}
 	rs := messages.RevealSecrets(s.kx, r.srMsg, r.dcMsg)
 	ke := messages.KeyExchange(pubs, rs.Commit(ses), ses)
-	err = s.client.send(ke, sendTimeout)
+	err := s.client.send(ke, sendTimeout)
 	if err != nil {
 		return err
 	}
@@ -449,6 +453,8 @@ var errRerun = errors.New("rerun")
 var runFailed = &struct{ RevealSecrets bool }{true}
 
 func (s *Session) serverRunFail(ctx context.Context, rs *messages.RS) error {
+	s.freshGen = true
+
 	// Reveal secrets
 	s.log.Print("server indicated run failure; revealing run secrets")
 	err := s.client.send(rs, sendTimeout)
@@ -459,6 +465,8 @@ func (s *Session) serverRunFail(ctx context.Context, rs *messages.RS) error {
 }
 
 func (s *Session) clientRunFail(ctx context.Context, rs *messages.RS) error {
+	s.freshGen = true
+
 	// Inform server of client-detected failure
 	err := s.client.send(runFailed, sendTimeout)
 	if err != nil {
