@@ -28,7 +28,8 @@ func (h *indexHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	indexTmpl.Execute(w, h)
 }
 
-var indexTmpl = template.Must(template.New("index").Parse(`<html>
+var indexTmpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
+<html lang="en">
 {{define "service-config"}}--csppserver={{.Address}}{{if .SelfSigned}} \
   --csppserver.ca={{.ServerName}}.pem{{end}}{{end}}
 <head>
@@ -87,16 +88,64 @@ $ dcrwallet {{template "service-config" .}} \
   --changeaccount=unmixed --ticketbuyer.votingaccount=voting --mixchange
 </pre>
 
-<p>To convert an existing ticket buying setup to gradually move funds to a new
-mixed ticket buyer, two ticket buying wallets may be run simultaneously.  Import
-unique voting extended public keys (xpubs) into each wallet to use as their
-voting accounts.  Then import the xpub of the mixed wallet's mixed account to
-the unmixed ticket buying wallet.  To avoid address reusage, each wallet should
-use different branches (/1 a.k.a. the internal branch for the mixed wallet, and
-/0 a.k.a. the external branch for the unmixed wallet).  The unmixed wallet will
-continue buying tickets funded by the existing purchase account, with mixed
-outputs flowing to the mixed wallet through the internal branch, while the new
-mixed wallet would only buy tickets funded by the mixed account.
+<h3>Converting from an unmixed ticket buyer</h3>
+
+Solo stakers wishing to convert from an unmixed solo ticket buying setup to a
+mixed buyer can use two ticket buying wallets simultaneously, with a setup to
+slowly mix funds from the existing buyer (buyer1) to the new mixed buyer
+(buyer2).
+
+Each ticket buyer must be provisioned with a unique voting xpub:
+
+<pre>
+voter$ dcrctl --wallet createnewaccount voting1
+voter$ dcrctl --wallet createnewaccount voting2
+voter$ dcrctl --wallet getmasterpubkey voting1
+<em>voting1-xpub</em>
+voter$ dcrctl --wallet getmasterpubkey voting2
+<em>voting2-xpub</em>
+buyer1$ dcrctl --wallet importxpub voting <em>voting1-xpub</em>
+buyer2$ dcrctl --wallet importxpub voting <em>voting2-xpub</em>
+</pre>
+
+In addition, the mixed account xpub of the mixed ticket buyer must be imported
+by buyer1:
+
+<pre>
+buyer2$ dcrctl --wallet getmasterpubkey mixed
+<em>mixed-xpub</em>
+buyer1$ dcrctl --wallet importxpub mixed <em>mixed-xpub</em>
+</pre>
+
+The mixed ticket buying wallet may use the setup from the previous section.  The
+old wallet must be configured sligtly differently:
+
+<pre>
+buyer1$ dcrwallet {{template "service-config" .}} \
+  --enableticketbuyer --purchaseaccount=default --mixedaccount=mixed/0 \
+  --ticketsplitaccount=default --changeaccount=unmixed
+  --ticketbuyer.votingaccount=voting --mixchange
+</pre>
+
+Note these differences:
+
+<ul>
+  <li>
+  <strong><code>--mixedaccount=mixed/0</code></strong> - The unmixed wallet must
+  use the external (not internal) branch of the mixed account to avoid address
+  reuseage problems arising from two wallets simultaneously deriving from the same
+  branch.
+  </li>
+
+  <li>
+  <strong><code>--ticketsplitaccount=default</code></strong> - Unless this is set,
+  the mixed account and branch will be used derive a fresh address for the mix.
+  However, this would create issues when publishing a ticket, because the unmixed
+  wallet does not have the required private key (mixed account is an imported xpub).
+  This option must be set to a derived account with private keys, such as the
+  purchasing source account.
+  </li>
+</ul>
 
 <h2>Change mixing and non-staking</h2>
 
