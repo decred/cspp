@@ -241,6 +241,9 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	if len(pr.Identity) != ed25519.PublicKeySize || !pr.VerifySignature(pr.Identity) {
 		return errors.New("invalid identity")
 	}
+	if pr.MessageCount < 0 {
+		return errors.New("negative message count")
+	}
 	log.Printf("recv(%v) PR Identity:%x PairCommitment:%x MessageCount:%d Unmixed:%x",
 		conn.RemoteAddr(), pr.Identity, pr.PairCommitment, pr.MessageCount, pr.Unmixed)
 	mix, err := s.newm(pr.PairCommitment)
