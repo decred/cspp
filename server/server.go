@@ -766,7 +766,10 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 		}
 	}
 	if len(ke.ECDH) == 0 {
-		return fmt.Errorf("invalid KE")
+		return fmt.Errorf("invalid KE: missing ECDH")
+	}
+	if len(ke.Commitment) != 32 {
+		return fmt.Errorf("invalid KE: commitment not 32 bytes")
 	}
 
 	log.Printf("recv(%v) KE Run:%d Commitment:%x", c.raddr(), ke.Run, ke.Commitment)
@@ -810,7 +813,17 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 
 	log.Printf("recv(%v) SR Run:%d DCMix:%x", c.raddr(), sr.Run, sr.DCMix)
 
+	if len(sr.DCMix) != c.pr.MessageCount {
+		return fmt.Errorf("invalid SR")
+	}
+
 	s.mu.Lock()
+	for i := range sr.DCMix {
+		if len(sr.DCMix[i]) != s.mtot {
+			s.mu.Unlock()
+			return fmt.Errorf("invalid SR")
+		}
+	}
 	c.sr = sr
 	s.srCount++
 	if s.srCount == uint32(len(s.clients)) {
