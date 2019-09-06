@@ -1,13 +1,12 @@
 package dcnet
 
 import (
-	"bytes"
-	"crypto/rand"
+	// "bytes"
+	// "crypto/rand"
 	"flag"
 	"os"
 	"testing"
-
-	"decred.org/cspp/chacha20prng"
+	// "decred.org/cspp/chacha20prng"
 )
 
 var nFlag = flag.Int64("n", 3, "node count")
@@ -109,7 +108,6 @@ func TestSRMix(t *testing.T) {
 		}
 	}
 }
-*/
 
 func ke(t *testing.T, n []SRNode) {
 	// Key exchange such that n[i].Kp[j] == n[j].Kp[i].  A real run would
@@ -195,3 +193,4 @@ func TestDCMix(t *testing.T) {
 		}
 	}
 }
+*/
