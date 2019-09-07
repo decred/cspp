@@ -70,15 +70,19 @@ type Session struct {
 	Pk ed25519.PublicKey  // Session pubkey
 	Sk ed25519.PrivateKey // Session signing key
 
+	rand     io.Reader
 	genConf  GenConfirmer
-	freshGen bool // Whether next run must generate fresh SR/DC messages
-	client   *client
-	sid      []byte
-	vk       []ed25519.PublicKey // session pubkeys
-	kx       []*x25519.KX
+	freshGen bool         // Whether next run must generate fresh x25519 keys, SR/DC messages
+	kx       []*x25519.KX // key exchange
 	ecdh     []*x25519.Public
-	mcount   int
-	mtot     int
+	srMsg    []*big.Int // random numbers to be exponential slot reservation mix
+	dcMsg    [][]byte   // anonymized messages to publish
+
+	client *client
+	sid    []byte
+	vk     []ed25519.PublicKey // session pubkeys
+	mcount int
+	mtot   int
 
 	log        Logger
 	commitment []byte
@@ -142,12 +146,10 @@ type run struct {
 	run     int
 
 	// Exponential slot reservation mix
-	srMsg []*big.Int // random numbers to be exponential dc-net mixed
 	srKP  [][][]byte // shared keys for exp dc-net
 	srMix [][]*big.Int
 
 	// XOR DC-net
-	dcMsg [][]byte
 	dcKP  [][]*dcnet.Vec
 	dcNet []*dcnet.Vec
 }
@@ -165,18 +167,11 @@ func NewSession(random io.Reader, log Logger, pairCommitment []byte, mixes int) 
 	if err != nil {
 		return nil, err
 	}
-	kx := make([]*x25519.KX, mixes)
-	for i := range kx {
-		kx[i], err = x25519.New(random)
-		if err != nil {
-			return nil, err
-		}
-	}
 	ses := &Session{
 		Pk:         pk,
 		Sk:         sk,
+		rand:       random,
 		mcount:     mixes,
-		kx:         kx,
 		log:        log,
 		commitment: pairCommitment,
 	}
@@ -277,35 +272,48 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	r := &run{session: s, run: n}
 	if n == 0 || s.freshGen {
 		s.freshGen = false
-		r.srMsg = make([]*big.Int, s.mcount)
+
+		// Generate fresh x25519 keys
+		s.kx = make([]*x25519.KX, s.mcount)
 		var err error
-		for i := range r.srMsg {
-			r.srMsg[i], err = rand.Int(rand.Reader, dcnet.F)
+		for i := range s.kx {
+			s.kx[i], err = x25519.New(s.rand)
 			if err != nil {
 				return err
 			}
 		}
-		r.dcMsg, err = s.genConf.Gen()
+
+		// Generate fresh SR messages
+		s.srMsg = make([]*big.Int, s.mcount)
+		for i := range s.srMsg {
+			s.srMsg[i], err = rand.Int(rand.Reader, dcnet.F)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Generate fresh DC messages
+		s.dcMsg, err = s.genConf.Gen()
 		if err != nil {
 			return err
 		}
-		if len(r.dcMsg) != s.mcount {
+		if len(s.dcMsg) != s.mcount {
 			return errors.New("cspp: Gen returned wrong message count")
 		}
-		for _, m := range r.dcMsg {
+		for _, m := range s.dcMsg {
 			if len(m) != MessageSize {
 				return errors.New("cspp: Gen returned bad message length")
 			}
 		}
 	}
-	s.log.Printf("SR msg: %x; DC msg: %x", r.srMsg, r.dcMsg)
+	s.log.Printf("SR msg: %x; DC msg: %x", s.srMsg, s.dcMsg)
 
 	// Perform key exchange
 	pubs := make([]*x25519.Public, len(s.kx))
 	for i := range pubs {
 		pubs[i] = &s.kx[i].Public
 	}
-	rs := messages.RevealSecrets(s.kx, r.srMsg, r.dcMsg)
+	rs := messages.RevealSecrets(s.kx, s.srMsg, s.dcMsg)
 	ke := messages.KeyExchange(pubs, rs.Commit(ses), ses)
 	err := s.client.send(ke, sendTimeout)
 	if err != nil {
@@ -339,7 +347,7 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	r.srMix = make([][]*big.Int, s.mcount)
 	for i := 0; i < s.mcount; i++ {
 		pads := dcnet.SRMixPads(r.srKP[i], s.myStart+i)
-		r.srMix[i] = dcnet.SRMix(r.srMsg[i], pads)
+		r.srMix[i] = dcnet.SRMix(s.srMsg[i], pads)
 	}
 
 	// Broadcast message commitment and exponential DC-mix vectors for slot
@@ -371,7 +379,7 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 			return errors.New("solved root is not in field")
 		}
 	}
-	for _, m := range r.srMsg {
+	for _, m := range s.srMsg {
 		slot := constTimeSlotSearch(m, rm.Roots)
 		if slot == -1 {
 			s.log.Printf("run failed: didn't find all slots")
@@ -385,7 +393,7 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	for i, slot := range slots {
 		my := s.myStart + i
 		pads := dcnet.DCMixPads(r.dcKP[i], MessageSize, my)
-		r.dcNet[i] = dcnet.DCMix(pads, r.dcMsg[i], slot)
+		r.dcNet[i] = dcnet.DCMix(pads, s.dcMsg[i], slot)
 	}
 
 	// Broadcast and wait for exponential DC-net vectors.
