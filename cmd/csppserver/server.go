@@ -93,8 +93,11 @@ func main() {
 		}
 	}()
 
-	rpc := setupRPC(ctx)
-	defer rpc.Close()
+	newRPC := setupRPC(ctx)
+	_, err := newRPC()
+	if err != nil {
+		log.Fatalf("dial dcrd: %v", err)
+	}
 
 	tc, selfsignedCert := setupTLS()
 
@@ -125,6 +128,10 @@ func main() {
 
 	newm := func(desc []byte) (server.Mixer, error) {
 		sc, amount, txVersion, lockTime, expiry, err := coinjoin.DecodeDesc(desc)
+		if err != nil {
+			return nil, err
+		}
+		rpc, err := newRPC()
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +257,7 @@ func setupTLS() (tc *tls.Config, selfsignedCert []byte) {
 	return
 }
 
-func setupRPC(ctx context.Context) *wsrpc.Client {
+func setupRPC(ctx context.Context) func() (*wsrpc.Client, error) {
 	dcrdCA, err := ioutil.ReadFile(*dcrdCAFlag)
 	if err != nil {
 		log.Fatal(err)
@@ -271,10 +278,29 @@ func setupRPC(ctx context.Context) *wsrpc.Client {
 	}
 	authOpt := wsrpc.WithBasicAuth(user, pass)
 
-	c, err := wsrpc.Dial(ctx, *dcrdWSFlag, tlsOpt, authOpt)
-	if err != nil {
-		log.Fatalf("dial dcrd: %v", err)
+	var mu sync.Mutex
+	var c *wsrpc.Client
+	return func() (*wsrpc.Client, error) {
+		defer mu.Unlock()
+		mu.Lock()
+
+		if c != nil {
+			select {
+			case <-c.Done():
+				log.Printf("RPC client errored (%v); reconnecting...", c.Err())
+				c = nil
+			default:
+				return c, nil
+			}
+		}
+
+		var err error
+		c, err = wsrpc.Dial(ctx, *dcrdWSFlag, tlsOpt, authOpt)
+		if err != nil {
+			c = nil
+			return nil, err
+		}
+		log.Printf("dialed dcrd websocket %v", *dcrdWSFlag)
+		return c, nil
 	}
-	log.Printf("dialed dcrd websocket %v", *dcrdWSFlag)
-	return c
 }

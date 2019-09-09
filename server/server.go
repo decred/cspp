@@ -119,7 +119,7 @@ type session struct {
 	msgses *messages.Session
 	br     *messages.BR
 	msize  int
-	newm   func() Mixer
+	newm   func() (Mixer, error)
 	mix    Mixer
 
 	pids map[string]int
@@ -248,7 +248,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 		conn.RemoteAddr(), pr.Identity, pr.PairCommitment, pr.MessageCount, pr.Unmixed)
 	mix, err := s.newm(pr.PairCommitment)
 	if err != nil {
-		return fmt.Errorf("unsupported mix: %v", err)
+		return fmt.Errorf("unable to begin mix: %v", err)
 	}
 	if j, ok := mix.(Joiner); ok {
 		err = j.ValidateUnmixed(pr.Unmixed)
@@ -368,6 +368,16 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				continue
 			}
 
+			pairCommitment := []byte(commitment)
+			newm := func() (Mixer, error) {
+				return s.newm(pairCommitment)
+			}
+			mix, err := newm()
+			if err != nil {
+				log.Printf("failed to create mix object: %v", err)
+				continue
+			}
+
 			delete(s.pairings, commitment)
 
 			sort.Slice(clients, func(i, j int) bool {
@@ -386,15 +396,6 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				totalMessages += clients[i].pr.MessageCount
 			}
 			sid := s.sidPRNG.Next(32)
-			pairCommitment := []byte(commitment)
-			newm := func() Mixer {
-				mix, err := s.newm(pairCommitment)
-				if err != nil {
-					// newm has been confirmed to not error with this input
-					log.Panicf("newm: %v", err)
-				}
-				return mix
-			}
 			ses := &session{
 				runState: runState{
 					allKEs:    make(chan struct{}),
@@ -414,7 +415,7 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				br:     messages.BeginRun(vk, mcounts, sid),
 				msize:  s.msize,
 				newm:   newm,
-				mix:    newm(),
+				mix:    mix,
 				pids:   pids,
 			}
 			pairs = append(pairs, ses)
@@ -497,13 +498,22 @@ func (s *session) exclude(blamed []int) error {
 	s.mcounts = s.mcounts[:len(s.clients)]
 	s.pids = make(map[string]int)
 	for i, c := range s.clients {
+		mix, err := s.newm()
+		if err != nil {
+			return err
+		}
 		s.vk[i] = c.pr.Identity
 		s.mcounts[i] = c.pr.MessageCount
 		s.pids[string(c.pr.Identity)] = i
 		c.ke = nil
 		c.sr = nil
 		c.dc = nil
-		c.mix = s.newm()
+		c.mix = mix
+	}
+
+	mix, err := s.newm()
+	if err != nil {
+		return err
 	}
 
 	s.keCount = 0
@@ -519,7 +529,7 @@ func (s *session) exclude(blamed []int) error {
 	s.roots = nil
 	s.msgses = messages.NewSession(s.sid, s.run, s.vk)
 	s.br = messages.BeginRun(s.vk, s.mcounts, s.sid)
-	s.mix = s.newm()
+	s.mix = mix
 	s.blaming = make(chan struct{})
 	s.rerunning = make(chan struct{})
 
