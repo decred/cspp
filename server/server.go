@@ -766,7 +766,10 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 		}
 	}
 	if len(ke.ECDH) == 0 {
-		return fmt.Errorf("invalid KE")
+		return fmt.Errorf("invalid KE: missing ECDH")
+	}
+	if len(ke.Commitment) != 32 {
+		return fmt.Errorf("invalid KE: commitment not 32 bytes")
 	}
 
 	log.Printf("recv(%v) KE Run:%d Commitment:%x", c.raddr(), ke.Run, ke.Commitment)
@@ -810,7 +813,18 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 
 	log.Printf("recv(%v) SR Run:%d DCMix:%x", c.raddr(), sr.Run, sr.DCMix)
 
+	if len(sr.DCMix) != c.pr.MessageCount {
+		return fmt.Errorf("invalid SR")
+	}
+
 	s.mu.Lock()
+	mtotal := s.mtot
+	for i := range sr.DCMix {
+		if len(sr.DCMix[i]) != mtotal {
+			s.mu.Unlock()
+			return fmt.Errorf("invalid SR")
+		}
+	}
 	c.sr = sr
 	s.srCount++
 	if s.srCount == uint32(len(s.clients)) {
@@ -846,13 +860,17 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	if err != nil {
 		return fmt.Errorf("read DC: %v", err)
 	}
+
+	log.Printf("recv(%v) DC Run:%d DCNet:%v", c.raddr(), dc.Run, dc.DCNet)
+
+	if len(dc.DCNet) != c.pr.MessageCount {
+		return fmt.Errorf("invalid DC")
+	}
 	for _, vec := range dc.DCNet {
-		if !vec.IsDim(s.mtot, s.msize) {
+		if !vec.IsDim(mtotal, s.msize) {
 			return fmt.Errorf("bad dc-net dimensions")
 		}
 	}
-
-	log.Printf("recv(%v) DC Run:%d DCNet:%v", c.raddr(), dc.Run, dc.DCNet)
 
 	s.mu.Lock()
 	c.dc = dc

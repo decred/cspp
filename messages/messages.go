@@ -6,7 +6,7 @@
 //                  (wait for epoch)
 //         <-- BR   Begin Run
 //      KE -->      Key Exchange
-//         <-- KEs  Server broadcasts all KE messagess to all peers
+//         <-- KEs  Server broadcasts all KE messages to all peers
 //      SR -->      Slot Reserve
 //         <-- RM   Recovered Messages
 //      DC -->      DC-net broadcast
@@ -25,7 +25,7 @@
 //                  (wait for epoch)
 //         <-- BR   Begin Run
 //      KE -->      Key Exchange
-//         <-- KEs  Server broadcasts all KE messagess to all peers
+//         <-- KEs  Server broadcasts all KE messages to all peers
 //      SR -->      Slot Reserve
 //         <-- RM   Recovered Messages
 //      DC -->      DC-net broadcast (with RevealSecrets=true)
