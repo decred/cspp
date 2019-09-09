@@ -178,6 +178,9 @@ func (pr *PR) WriteSigned(w io.Writer) {
 }
 
 func (pr *PR) VerifySignature(pub ed25519.PublicKey) bool {
+	if len(pr.Signature) != ed25519.SignatureSize {
+		return false
+	}
 	buf := new(bytes.Buffer)
 	pr.WriteSigned(buf)
 	return ed25519.Verify(pub, buf.Bytes(), pr.Signature)
