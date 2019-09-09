@@ -818,8 +818,9 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 
 	s.mu.Lock()
+	mtotal := s.mtot
 	for i := range sr.DCMix {
-		if len(sr.DCMix[i]) != s.mtot {
+		if len(sr.DCMix[i]) != mtotal {
 			s.mu.Unlock()
 			return fmt.Errorf("invalid SR")
 		}
@@ -859,13 +860,17 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	if err != nil {
 		return fmt.Errorf("read DC: %v", err)
 	}
+
+	log.Printf("recv(%v) DC Run:%d DCNet:%v", c.raddr(), dc.Run, dc.DCNet)
+
+	if len(dc.DCNet) != c.pr.MessageCount {
+		return fmt.Errorf("invalid DC")
+	}
 	for _, vec := range dc.DCNet {
-		if !vec.IsDim(s.mtot, s.msize) {
+		if !vec.IsDim(mtotal, s.msize) {
 			return fmt.Errorf("bad dc-net dimensions")
 		}
 	}
-
-	log.Printf("recv(%v) DC Run:%d DCNet:%v", c.raddr(), dc.Run, dc.DCNet)
 
 	s.mu.Lock()
 	c.dc = dc
