@@ -608,9 +608,8 @@ func (s *session) doRun(ctx context.Context) error {
 	roots, err := solver.Roots(coeffs, dcnet.F)
 	if err != nil {
 		close(blaming)
-		err := s.blame(ctx, nil)
 		s.mu.Unlock()
-		return err
+		return s.blame(ctx, nil)
 	}
 	log.Printf("solved roots in %v", time.Since(t))
 	sort.Slice(roots, func(i, j int) bool {
