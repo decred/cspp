@@ -1,4 +1,11 @@
-# CoinShuffle++
+CoinShuffle++
+=============
+
+[![Build Status](https://github.com/decred/cspp/workflows/Build%20and%20Test/badge.svg)](https://github.com/decred/cspp/actions)
+[![ISC License](https://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](https://godoc.org/decred.org/cspp)
+
+## Overview
 
 This module provides client and server implementations to execute the
 [CoinShuffle++](https://crypsys.mmci.uni-saarland.de/projects/FastDC/paper.pdf)
