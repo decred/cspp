@@ -16,8 +16,8 @@ jobs:
         uses: actions/checkout@v1
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y libflint-dev libmpfr-dev
+          sudo apt-get update
+          sudo apt-get install -y libflint-dev libmpfr-dev
       - name: Install linters
         run: "curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin v1.19.1"
       - name: Build
