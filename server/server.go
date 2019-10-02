@@ -310,6 +310,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-readErr:
+		s.removePR(pr.PairCommitment, c)
 		if err != nil {
 			return err
 		}
@@ -326,7 +327,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 			return nil
 		}
 		if err == errRerun {
-			log.Printf("gonna do a rerun")
+			log.Printf("client %v: rerunning session %x", c.conn.RemoteAddr(), ses.sid)
 			continue
 		}
 		return err
@@ -334,17 +335,18 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 }
 
 func (s *Server) removePR(commitment []byte, c *client) {
+	defer s.pairingsMu.Unlock()
 	s.pairingsMu.Lock()
 	clients := s.pairings[string(commitment)]
 	for i := range clients {
 		if clients[i] == c {
 			clients[i] = clients[len(clients)-1]
 			s.pairings[string(commitment)] = clients[:len(clients)-1]
+			c.cancel()
+			log.Printf("removed %v from pairing queue", c.conn.RemoteAddr())
 			break
 		}
 	}
-	s.pairingsMu.Unlock()
-	log.Printf("removed %v from pairing queue", c.conn.RemoteAddr())
 }
 
 func (s *Server) pairSessions(ctx context.Context) error {
@@ -765,7 +767,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	log.Printf("Performing run %d with %v", run, c.raddr())
 
 	if ke != nil && run != 0 {
-		panic("bad")
+		panic("ke parameter must be nil on reruns")
 	}
 	if ke == nil {
 		ke = new(messages.KE)
