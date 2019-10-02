@@ -1091,7 +1091,6 @@ KELoop:
 		}
 		b[i].srMsg = c.rs.SR
 		b[i].dcMsg = c.rs.M
-
 	}
 	if len(blamed) > 0 {
 		return blamed

@@ -71,21 +71,6 @@ func writeSignedByteSlice(w io.Writer, scratch []byte, data []byte) {
 	w.Write(data)
 }
 
-func padToScratch(scratch []byte, msg []byte) []byte {
-	if len(msg) > len(scratch) {
-		panic("msg len exceeds scratch space")
-	}
-	if len(scratch) == len(msg) {
-		return msg
-	}
-	start := len(scratch) - len(msg)
-	for i := range scratch[:start] {
-		scratch[i] = 0
-	}
-	copy(scratch[start:], msg)
-	return scratch
-}
-
 // Signed indicates a session message carries an ed25519 signature that
 // must be checked.
 type Signed interface {

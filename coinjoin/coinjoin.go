@@ -89,8 +89,6 @@ func (sc ScriptClass) Match(script []byte, vers uint16) bool {
 	return match
 }
 
-func (sc ScriptClass) msize() int { return 20 }
-
 func (sc ScriptClass) script(message []byte) []byte {
 	switch sc {
 	case P2PKHv0:
