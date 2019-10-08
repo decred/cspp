@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -86,6 +87,8 @@ type Server struct {
 	tickerOnce sync.Once
 	pairings   map[string][]*client
 	pairingsMu sync.Mutex
+
+	report *json.Encoder
 }
 
 type runState struct {
@@ -95,12 +98,13 @@ type runState struct {
 	confCount uint32
 	rsCount   uint32
 
-	run     int
-	mtot    int
-	clients []*client
-	vk      []ed25519.PublicKey
-	mcounts []int
-	roots   []*big.Int
+	run      int
+	mtot     int
+	clients  []*client
+	excluded []*client
+	vk       []ed25519.PublicKey
+	mcounts  []int
+	roots    []*big.Int
 
 	allKEs   chan struct{}
 	allSRs   chan struct{}
@@ -124,6 +128,8 @@ type session struct {
 
 	pids map[string]int
 	mu   sync.Mutex
+
+	report *json.Encoder
 }
 
 type client struct {
@@ -170,6 +176,10 @@ func New(msize int, newm NewMixer, epoch time.Duration) (*Server, error) {
 		pairings: make(map[string][]*client),
 	}
 	return s, nil
+}
+
+func (s *Server) SetReportEncoder(enc *json.Encoder) {
+	s.report = enc
 }
 
 // Run executes the server, listening on lis for new client connections.
@@ -419,6 +429,7 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				newm:   newm,
 				mix:    mix,
 				pids:   pids,
+				report: s.report,
 			}
 			pairs = append(pairs, ses)
 		}
@@ -482,6 +493,7 @@ func (s *session) exclude(blamed []int) error {
 	for _, pid := range blamed {
 		log.Printf("excluding %v\n", s.clients[pid].raddr())
 		close(s.clients[pid].blamed)
+		s.excluded = append(s.excluded, s.clients[pid])
 		s.clients[pid].cancel()
 		s.mtot -= s.clients[pid].pr.MessageCount
 		s.clients[pid] = nil
@@ -541,7 +553,45 @@ func (s *session) exclude(blamed []int) error {
 	return nil
 }
 
-func (s *session) doRun(ctx context.Context) error {
+func (s *session) reportCompletedMix() {
+	defer s.mu.Unlock()
+	s.mu.Lock()
+
+	if s.report == nil {
+		return
+	}
+	type report struct {
+		Time          time.Time
+		Mixes         int
+		PeerCount     int
+		ExcludedPeers int
+		Mix           interface{} `json:",omitempty"`
+	}
+	r := &report{
+		Time:          time.Now(),
+		Mixes:         s.mtot,
+		PeerCount:     len(s.clients),
+		ExcludedPeers: len(s.excluded),
+	}
+	type mixReporter interface {
+		Report() interface{}
+	}
+	if m, ok := s.mix.(mixReporter); ok {
+		r.Mix = m.Report()
+	}
+	if err := s.report.Encode(r); err != nil {
+		log.Printf("cannot write mix report: %v", err)
+	}
+}
+
+func (s *session) doRun(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			return
+		}
+		s.reportCompletedMix()
+	}()
+
 	var timedOut blamePIDs
 
 	// Wait for all KE messages, or KE timeout.
@@ -589,7 +639,6 @@ func (s *session) doRun(ctx context.Context) error {
 	s.mu.Unlock()
 
 	// Wait for all SR messages, or SR timeout.
-	var err error
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"flag"
 	"io/ioutil"
@@ -58,6 +59,7 @@ var (
 	dcrdUserFlag = fs.String("dcrd.user", "", "dcrd RPC username; uses DCRDUSER environment variable if unset")
 	dcrdPassFlag = fs.String("dcrd.pass", "", "dcrd RPC password; uses DCRDPASS environment variable if unset")
 	pprofFlag    = fs.String("pprof", "", "listen address of pprof server")
+	reportFlag   = fs.String("report", "", "report stats of successful mixes to file")
 )
 
 func main() {
@@ -140,6 +142,14 @@ func main() {
 	s, err := server.New(cspp.MessageSize, newm, *epochFlag)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *reportFlag != "" {
+		fi, err := os.OpenFile(*reportFlag, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer fi.Close()
+		s.SetReportEncoder(json.NewEncoder(fi))
 	}
 	listen := func(addr string) (lis net.Listener, err error) {
 		defer func() {

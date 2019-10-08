@@ -334,6 +334,33 @@ func (t *Tx) PublishMix(ctx context.Context) error {
 	return nil
 }
 
+type report struct {
+	TxHash       string
+	Denomination int64
+	TotalInput   int64
+	Fee          int64
+}
+
+// Report returns an object that can be marshaled with reflection-based encoders
+// such as encoding/json and encoding/gob.  The object includes details about
+// the current CoinJoin transaction.
+func (t *Tx) Report() interface{} {
+	r := &report{
+		TxHash:       t.Tx.TxHash().String(),
+		Denomination: t.mixValue,
+	}
+	var input, output int64
+	for _, in := range t.Tx.TxIn {
+		input += in.ValueIn
+	}
+	for _, out := range t.Tx.TxOut {
+		output += out.Value
+	}
+	r.TotalInput = input
+	r.Fee = input - output
+	return r
+}
+
 // Blamer describes misbehaving peer IDs.
 type Blamer interface {
 	Blame() []int
