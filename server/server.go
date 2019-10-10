@@ -548,7 +548,10 @@ func (s *session) exclude(blamed []int) error {
 	s.rerunning = make(chan struct{})
 
 	for _, c := range s.clients {
-		c.out <- s.br
+		select {
+		case c.out <- s.br:
+		case <-c.done:
+		}
 	}
 	return nil
 }
