@@ -249,8 +249,10 @@ func (t *Tx) Join(unmixed []byte, pid int) error {
 	return nil
 }
 
+const rpcTimeout = 10 * time.Second
+
 func verifyOutput(c Caller, outpoint *wire.OutPoint, value int64) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 	var res struct {
 		Value float64 `json:"value"`
@@ -324,7 +326,7 @@ func (t *Tx) PublishMix(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 	err = t.c.Call(ctx, "sendrawtransaction", nil, b.String())
 	if err != nil {
