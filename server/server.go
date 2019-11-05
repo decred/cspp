@@ -260,14 +260,6 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("unable to begin mix: %v", err)
 	}
-	if j, ok := mix.(Joiner); ok {
-		err = j.ValidateUnmixed(pr.Unmixed)
-		if err != nil {
-			return err
-		}
-	} else if pr.Unmixed != nil {
-		return errors.New("cannot join unmixed data")
-	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	c := &client{
@@ -287,6 +279,15 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 		<-ctx.Done()
 		close(c.done)
 	}()
+	if j, ok := mix.(Joiner); ok {
+		err = j.ValidateUnmixed(pr.Unmixed)
+		if err != nil {
+			c.sendDeadline(invalidUnmixed, sendTimeout)
+			return err
+		}
+	} else if pr.Unmixed != nil {
+		return errors.New("cannot join unmixed data")
+	}
 
 	// Wait to be paired.
 	// Begin reading a KE to detect disconnect before pairing completes.
@@ -474,7 +475,7 @@ func (s *session) start(ctx context.Context, wg *sync.WaitGroup) {
 			continue
 		}
 		if err != nil {
-			log.Printf("aborting session with failed blame assignment: %v", err)
+			s.abortSession(err)
 		}
 		return
 	}
@@ -584,6 +585,17 @@ func (s *session) reportCompletedMix() {
 	}
 	if err := s.report.Encode(r); err != nil {
 		log.Printf("cannot write mix report: %v", err)
+	}
+}
+
+func (s *session) abortSession(err error) {
+	defer s.mu.Unlock()
+	s.mu.Lock()
+
+	log.Printf("aborting session %x with failed blame assignment: %v", s.sid, err)
+
+	for _, c := range s.clients {
+		c.sendDeadline(abortedSession, 500*time.Millisecond)
 	}
 }
 
@@ -814,6 +826,13 @@ func (s *session) doRun(ctx context.Context) (err error) {
 
 var revealSecrets interface{} = &struct{ RevealSecrets bool }{true}
 var errBlamed = errors.New("blamed")
+
+type serverErrorCode struct {
+	Err messages.ServerError
+}
+
+var abortedSession = &serverErrorCode{messages.ErrAbortedSession}
+var invalidUnmixed = &serverErrorCode{messages.ErrInvalidUnmixed}
 
 func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) error {
 	log.Printf("Performing run %d with %v", run, c.raddr())

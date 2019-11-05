@@ -54,6 +54,30 @@ import (
 	"golang.org/x/crypto/ed25519"
 )
 
+// ServerError describes an error message sent by the server.
+// The peer cannot continue in the mix session if an error is received.
+// The zero value indicates the absense of an error.
+type ServerError int
+
+// Server errors
+const (
+	ErrAbortedSession ServerError = iota + 1
+	ErrInvalidUnmixed
+)
+
+func (e ServerError) Error() string {
+	switch e {
+	case 0:
+		return "no error"
+	case ErrAbortedSession:
+		return "server aborted mix session"
+	case ErrInvalidUnmixed:
+		return "submitted unmixed data is invalid"
+	default:
+		return "unknown server error code " + strconv.Itoa(int(e))
+	}
+}
+
 var (
 	msgPR      = []byte("PR")
 	msgSidH    = []byte("sidH")
@@ -177,6 +201,7 @@ type BR struct {
 	Vk            []ed25519.PublicKey
 	MessageCounts []int
 	Sid           []byte
+	Err           ServerError
 }
 
 // BeginRun creates the begin run message.
@@ -186,6 +211,13 @@ func BeginRun(vk []ed25519.PublicKey, mixes []int, sid []byte) *BR {
 		MessageCounts: mixes,
 		Sid:           sid,
 	}
+}
+
+func (br *BR) ServerError() error {
+	if br.Err == 0 {
+		return nil
+	}
+	return br.Err
 }
 
 // KE is the client's opening key exchange message of a run.
@@ -209,6 +241,14 @@ func KeyExchange(ecdh []*x25519.Public, commitment []byte, ses *Session) *KE {
 type KEs struct {
 	KEs []*KE
 	BR  // Indicates to begin new run after peer exclusion
+	Err ServerError
+}
+
+func (kes *KEs) ServerError() error {
+	if kes.Err == 0 {
+		return nil
+	}
+	return kes.Err
 }
 
 // SR is the slot reservation broadcast.
@@ -234,6 +274,14 @@ type RM struct {
 	Roots         []*big.Int
 	RevealSecrets bool
 	BR            // Indicates to begin new run after peer exclusion
+	Err           ServerError
+}
+
+func (rm *RM) ServerError() error {
+	if rm.Err == 0 {
+		return nil
+	}
+	return rm.Err
 }
 
 // RecoveredMessages creates a recovered messages message.
@@ -265,6 +313,14 @@ type CM struct {
 	Mix           BinaryRepresentable
 	RevealSecrets bool
 	BR            // Indicates to begin new run after peer exclusion
+	Err           ServerError
+}
+
+func (cm *CM) ServerError() error {
+	if cm.Err == 0 {
+		return nil
+	}
+	return cm.Err
 }
 
 // ConfirmedMix creates the confirmed mix message, sending either the confirmed

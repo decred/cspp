@@ -138,6 +138,12 @@ func (c *client) recv(out interface{}, timeout time.Duration) error {
 		file = filepath.Base(file)
 		return fmt.Errorf("%v: read %T (%v:%v): %v", c.conn.LocalAddr(), out, file, line, err)
 	}
+	// Return server error if message carries an error code
+	if se, ok := out.(interface{ ServerError() error }); ok {
+		if err := se.ServerError(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
