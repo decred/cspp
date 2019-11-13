@@ -123,7 +123,7 @@ old wallet must be configured sligtly differently:
 <pre>
 buyer1$ dcrwallet {{template "service-config" .}} \
   --enableticketbuyer --purchaseaccount=default --mixedaccount=mixed/0 \
-  --ticketsplitaccount=default --changeaccount=unmixed
+  --ticketsplitaccount=default --changeaccount=unmixed \
   --ticketbuyer.votingaccount=voting --mixchange
 </pre>
 
