@@ -51,6 +51,7 @@ var (
 	portFlag     = fs.String("port", "5760", "alternate external port of CoinShuffle++ server")
 	tlsFlag      = fs.String("tls", "", "(required) auto=domain to use LetsEncrypt (will bind to -acme) or manual=cert,key")
 	acmeFlag     = fs.String("acme", ":80", "listen interface for ACME challenge; must be reachable at port 80 from internet")
+	stagingFlag  = fs.Bool("staging", false, "use LetsEncrypt staging server")
 	httpFlag     = fs.String("http", "", "listen address for public webserver (no TLS)")
 	httpsFlag    = fs.String("https", ":443", "listen address for public webserver (uses same TLS config as from cspp listener)")
 	epochFlag    = fs.Duration("epoch", 5*time.Minute, "mixing epoch")
@@ -181,6 +182,8 @@ func main() {
 	wg.Wait()
 }
 
+const letsEncryptStagingURL = "https://acme-staging-v02.api.letsencrypt.org/directory"
+
 func setupTLS() (tc *tls.Config, selfsignedCert []byte) {
 	tc = &tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -213,6 +216,10 @@ func setupTLS() (tc *tls.Config, selfsignedCert []byte) {
 			Prompt:     autocert.AcceptTOS,
 			Cache:      autocert.DirCache(filepath.Join(home, ".csppserver")),
 			HostPolicy: autocert.HostWhitelist(domain),
+		}
+		if *stagingFlag {
+			log.Printf("using LetsEncrypt staging environment")
+			m.Client = &acme.Client{DirectoryURL: letsEncryptStagingURL}
 		}
 		tc.ServerName = domain
 		tc.GetCertificate = m.GetCertificate
