@@ -304,14 +304,15 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 		s.removePR(pr.PairCommitment, c)
 		return ctx.Err()
 	case err := <-readErr:
+		s.removePR(pr.PairCommitment, c)
 		if err == nil {
 			return fmt.Errorf("%v: read message before run started", c.conn.RemoteAddr())
 		}
-		s.removePR(pr.PairCommitment, c)
 		return err
 	case ses = <-c.sesc:
 		err := c.sendDeadline(ses.br, sendTimeout)
 		if err != nil {
+			s.removePR(pr.PairCommitment, c)
 			return err
 		}
 	}
@@ -319,6 +320,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	// Wait for initial KE to be read.
 	select {
 	case <-ctx.Done():
+		s.removePR(pr.PairCommitment, c)
 		return ctx.Err()
 	case err := <-readErr:
 		s.removePR(pr.PairCommitment, c)
