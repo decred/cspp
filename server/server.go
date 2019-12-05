@@ -291,6 +291,13 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 
 	// Wait to be paired.
 	// Begin reading a KE to detect disconnect before pairing completes.
+	var PRRemoved bool
+	defer func() {
+		if !PRRemoved {
+			s.removePR(pr.PairCommitment, c)
+		}
+	}()
+
 	s.pairingsMu.Lock()
 	s.pairings[string(pr.PairCommitment)] = append(s.pairings[string(pr.PairCommitment)], c)
 	s.pairingsMu.Unlock()
@@ -301,10 +308,8 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	go c.read(ke, readErr)
 	select {
 	case <-ctx.Done():
-		s.removePR(pr.PairCommitment, c)
 		return ctx.Err()
 	case err := <-readErr:
-		s.removePR(pr.PairCommitment, c)
 		if err == nil {
 			return fmt.Errorf("%v: read message before run started", c.conn.RemoteAddr())
 		}
@@ -312,7 +317,6 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	case ses = <-c.sesc:
 		err := c.sendDeadline(ses.br, sendTimeout)
 		if err != nil {
-			s.removePR(pr.PairCommitment, c)
 			return err
 		}
 	}
@@ -320,10 +324,10 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	// Wait for initial KE to be read.
 	select {
 	case <-ctx.Done():
-		s.removePR(pr.PairCommitment, c)
 		return ctx.Err()
 	case err := <-readErr:
 		s.removePR(pr.PairCommitment, c)
+		PRRemoved = true
 		if err != nil {
 			return err
 		}
