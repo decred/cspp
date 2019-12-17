@@ -74,9 +74,8 @@ type Session struct {
 	genConf  GenConfirmer
 	freshGen bool         // Whether next run must generate fresh x25519 keys, SR/DC messages
 	kx       []*x25519.KX // key exchange
-	ecdh     []*x25519.Public
-	srMsg    []*big.Int // random numbers to be exponential slot reservation mix
-	dcMsg    [][]byte   // anonymized messages to publish
+	srMsg    []*big.Int   // random numbers to be exponential slot reservation mix
+	dcMsg    [][]byte     // anonymized messages to publish
 
 	client *client
 	sid    []byte
@@ -467,6 +466,9 @@ var errRerun = errors.New("rerun")
 var runFailed = &struct{ RevealSecrets bool }{true}
 
 func (s *Session) serverRunFail(ctx context.Context, rs *messages.RS) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	s.freshGen = true
 
 	// Reveal secrets
@@ -479,6 +481,9 @@ func (s *Session) serverRunFail(ctx context.Context, rs *messages.RS) error {
 }
 
 func (s *Session) clientRunFail(ctx context.Context, rs *messages.RS) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	s.freshGen = true
 
 	// Inform server of client-detected failure
