@@ -84,7 +84,6 @@ type Server struct {
 	msize      int
 	newm       NewMixer
 	epoch      time.Duration
-	tickerOnce sync.Once
 	pairings   map[string][]*client
 	pairingsMu sync.Mutex
 
@@ -1052,12 +1051,10 @@ type blame struct {
 	// Exponential slot reservation mix
 	srMsg []*big.Int // random numbers to be exponential dc-net mixed
 	srKP  [][][]byte // shared keys for exp dc-net
-	srMix [][]*big.Int
 
 	// XOR DC-net
 	dcMsg [][]byte
 	dcKP  [][]*dcnet.Vec
-	dcNet []*dcnet.Vec
 }
 
 // blamer describes IDs of blamed peers in a failed run.
@@ -1151,7 +1148,7 @@ KELoop:
 		starts = append(starts, len(ecdh))
 		ecdh = append(ecdh, c.ke.ECDH...)
 		mcount := c.pr.MessageCount
-		if len(c.rs.ECDH) != mcount || len(c.rs.ECDH) != mcount {
+		if len(c.rs.ECDH) != mcount {
 			log.Printf("blaming %v for bad ECDH count", c.raddr())
 			blamed = append(blamed, i)
 			continue

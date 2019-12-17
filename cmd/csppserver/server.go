@@ -262,7 +262,7 @@ func setupTLS() (tc *tls.Config, selfsignedCert []byte) {
 			selfsignedCert = buf.Bytes()
 		}
 		if len(x509Cert.DNSNames) == 0 {
-			log.Fatal("certificate has no valid Subject Alterante Name")
+			log.Fatal("certificate has no valid Subject Alternate Name")
 		}
 		tc.ServerName = x509Cert.DNSNames[0]
 		tc.Certificates = []tls.Certificate{cert}

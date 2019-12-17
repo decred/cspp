@@ -56,7 +56,7 @@ import (
 
 // ServerError describes an error message sent by the server.
 // The peer cannot continue in the mix session if an error is received.
-// The zero value indicates the absense of an error.
+// The zero value indicates the absence of an error.
 type ServerError int
 
 // Server errors

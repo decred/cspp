@@ -45,15 +45,14 @@ type Caller interface {
 // Tx is a Decred CoinJoin transaction builder.  It is intended for usage by
 // CoinJoin servers, not clients.
 type Tx struct {
-	Tx            wire.MsgTx
-	c             Caller
-	sc            ScriptClass
-	inputPids     []int
-	mixValue      int64
-	txVersion     uint16
-	scriptVersion uint16
-	lockTime      uint32
-	expiry        uint32
+	Tx        wire.MsgTx
+	c         Caller
+	sc        ScriptClass
+	inputPids []int
+	mixValue  int64
+	txVersion uint16
+	lockTime  uint32
+	expiry    uint32
 }
 
 type ScriptClass int
