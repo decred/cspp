@@ -102,14 +102,18 @@ func main() {
 		log.Fatalf("dial dcrd: %v", err)
 	}
 
-	tc, selfsignedCert := setupTLS()
+	tc, selfsignedCert, alternateServerNames := setupTLS()
+
+	onionServerName := getOnionServerName(alternateServerNames)
 
 	httpServer := &http.Server{
 		Handler: &indexHandler{
-			ServerName: tc.ServerName,
-			Address:    net.JoinHostPort(tc.ServerName, *portFlag),
-			Epoch:      *epochFlag,
-			SelfSigned: selfsignedCert,
+			ServerName:      tc.ServerName,
+			OnionServerName: onionServerName,
+			Address:         net.JoinHostPort(tc.ServerName, *portFlag),
+			OnionAddress:    net.JoinHostPort(onionServerName, *portFlag),
+			Epoch:           *epochFlag,
+			SelfSigned:      selfsignedCert,
 		},
 	}
 	if *httpFlag != "" {
@@ -184,7 +188,7 @@ func main() {
 
 const letsEncryptStagingURL = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
-func setupTLS() (tc *tls.Config, selfsignedCert []byte) {
+func setupTLS() (tc *tls.Config, selfsignedCert []byte, alternateServerNames []string) {
 	tc = &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		CurvePreferences: []tls.CurveID{
@@ -266,6 +270,7 @@ func setupTLS() (tc *tls.Config, selfsignedCert []byte) {
 		}
 		tc.ServerName = x509Cert.DNSNames[0]
 		tc.Certificates = []tls.Certificate{cert}
+		alternateServerNames = x509Cert.DNSNames
 	default:
 		log.Print("bad -tls flag")
 		fs.Usage()
@@ -320,4 +325,14 @@ func setupRPC(ctx context.Context) func() (*wsrpc.Client, error) {
 		log.Printf("dialed dcrd websocket %v", *dcrdWSFlag)
 		return c, nil
 	}
+}
+
+func getOnionServerName(alternateNames []string) (onionAddress string) {
+	for _, address := range alternateNames {
+		if strings.HasSuffix(address, ".onion") {
+			onionAddress = address
+			return
+		}
+	}
+	return
 }
