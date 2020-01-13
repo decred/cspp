@@ -704,8 +704,8 @@ func (s *session) doRun(ctx context.Context) (err error) {
 		case <-c.done:
 		}
 	}
-	s.mu.Unlock()
 	s.roots = roots
+	s.mu.Unlock()
 
 	// Wait for all DC messages, or DC timeout.
 	select {
