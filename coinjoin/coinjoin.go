@@ -206,7 +206,8 @@ func (t *Tx) ValidateUnmixed(unmixed []byte) error {
 	}
 	for _, in := range other.TxIn {
 		if err := verifyOutput(t.c, &in.PreviousOutPoint, in.ValueIn); err != nil {
-			if e, ok := err.(*blameError); ok {
+			var e *blameError
+			if errors.As(err, &e) {
 				return errors.New(e.s)
 			}
 			return err
@@ -233,7 +234,8 @@ func (t *Tx) Join(unmixed []byte, pid int) error {
 	}
 	for _, in := range other.TxIn {
 		if err := verifyOutput(t.c, &in.PreviousOutPoint, in.ValueIn); err != nil {
-			if e, ok := err.(*blameError); ok {
+			var e *blameError
+			if errors.As(err, &e) {
 				e.b = []int{pid}
 			}
 			return err

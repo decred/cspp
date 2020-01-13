@@ -206,12 +206,13 @@ func (s *Session) DiceMix(ctx context.Context, conn net.Conn, genConf GenConfirm
 		err := s.run(ctx, i, br)
 		br = nil
 		if err != nil {
-			if e, ok := err.(beginRunner); ok {
+			var e beginRunner
+			if errors.As(err, &e) {
 				br = e.BR()
 				s.log.Printf("rerunning")
 				continue
 			}
-			if err == errRerun {
+			if errors.Is(err, errRerun) {
 				s.log.Printf("rerunning")
 				continue
 			}
@@ -422,7 +423,8 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 		err = s.genConf.Confirm()
 	}
 	if err != nil {
-		if _, ok := err.(MissingMessage); ok {
+		var errMM MissingMessage
+		if errors.As(err, &errMM) {
 			s.log.Printf("missing message: %v", err)
 			return s.clientRunFail(ctx, rs)
 		}

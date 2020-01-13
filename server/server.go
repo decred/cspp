@@ -342,7 +342,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 		if err == nil {
 			return nil
 		}
-		if err == errRerun {
+		if errors.Is(err, errRerun) {
 			log.Printf("client %v: rerunning session %x", c.conn.RemoteAddr(), ses.sid)
 			continue
 		}
@@ -471,7 +471,9 @@ func (s *session) start(ctx context.Context, wg *sync.WaitGroup) {
 	}()
 	for i := 0; ; i++ {
 		err := run(i)
-		if b, ok := err.(blamer); ok {
+
+		var b blamer
+		if errors.As(err, &b) {
 			err = s.exclude(b.Blame())
 			if err != nil {
 				log.Printf("cannot continue after exclusion: %v", err)
