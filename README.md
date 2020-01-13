@@ -64,7 +64,7 @@ anonymously.
 
 ## Build requirements
 
-All client packages and server software from this repo requires Go 1.12 or
+All client packages and server software from this repo requires Go 1.13 or
 later.
 
 In addition, the server software, found in the cmd/csppserver directory, depends
