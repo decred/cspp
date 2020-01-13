@@ -21,7 +21,7 @@ type KX struct {
 // key.
 func New(rand io.Reader) (*KX, error) {
 	kx := new(KX)
-	_, err := rand.Read(kx.Scalar[:])
+	_, err := io.ReadFull(rand, kx.Scalar[:])
 	if err != nil {
 		return nil, err
 	}
