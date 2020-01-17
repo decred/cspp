@@ -77,8 +77,3 @@ against.  On Ubuntu 18.04:
 ## License
 
 cspp is released under a permissive ISC license.
-
-Due to restrictions of the Go package system, some internal packages from the Go
-project are copied to this repository.  These packages are available under a
-3-clause BSD-style license.  The licenses for these copied packages can be found
-in LICENSE files in the respective directories.

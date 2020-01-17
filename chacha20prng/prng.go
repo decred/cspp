@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"strconv"
 
-	"decred.org/cspp/internal/chacha20" // Copy of golang.org/x/crypto/internal/chacha20
+	"golang.org/x/crypto/chacha20"
 )
 
 // SeedSize is the required length of seeds for New.
@@ -23,18 +23,10 @@ func New(seed []byte, run uint32) *Reader {
 		panic("chacha20prng: bad seed length " + strconv.Itoa(l))
 	}
 
-	var key = [8]uint32{
-		binary.LittleEndian.Uint32(seed[0:4]),
-		binary.LittleEndian.Uint32(seed[4:8]),
-		binary.LittleEndian.Uint32(seed[8:12]),
-		binary.LittleEndian.Uint32(seed[12:16]),
-		binary.LittleEndian.Uint32(seed[16:20]),
-		binary.LittleEndian.Uint32(seed[20:24]),
-		binary.LittleEndian.Uint32(seed[24:28]),
-		binary.LittleEndian.Uint32(seed[28:32]),
-	}
-	var nonce = [3]uint32{0: run}
-	cipher := chacha20.New(key, nonce)
+	nonce := make([]byte, chacha20.NonceSize)
+	binary.LittleEndian.PutUint32(seed[:4], run)
+
+	cipher, _ := chacha20.NewUnauthenticatedCipher(seed, nonce)
 	return &Reader{cipher: cipher}
 }
 
