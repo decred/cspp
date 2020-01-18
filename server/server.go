@@ -346,6 +346,8 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 			log.Printf("client %v: rerunning session %x", c.conn.RemoteAddr(), ses.sid)
 			continue
 		}
+		log.Printf("client %v: %v", c.conn.RemoteAddr(), err)
+		c.cancel()
 		return err
 	}
 }
