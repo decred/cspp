@@ -24,7 +24,7 @@ func New(seed []byte, run uint32) *Reader {
 	}
 
 	nonce := make([]byte, chacha20.NonceSize)
-	binary.LittleEndian.PutUint32(seed[:4], run)
+	binary.LittleEndian.PutUint32(nonce[:4], run)
 
 	cipher, _ := chacha20.NewUnauthenticatedCipher(seed, nonce)
 	return &Reader{cipher: cipher}
