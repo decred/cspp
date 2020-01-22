@@ -71,7 +71,7 @@ and see below for config examples.</p>
 <p>Mixed ticket buying uses CoinShuffle++ to anonymize outputs of split
 transactions, which are spent to create ticket purchases.  Voting rights and
 commitment outputs must be assigned to unused and unique addresses of accounts
-and not single addresses to prevent address reusage.</p>
+and not single addresses to prevent address reuse.</p>
 
 <p>Solo stakers are recommended to use two wallets to separate ticket buying and
 voting, due to requirements of the voting wallet being always unlocked and
@@ -172,9 +172,9 @@ from the account without leaving the wallet persistently unlocked.</p>
 unmixed account to provide receiving addresses and mix the account as if it was
 CoinShuffle++ change.</p>
 
-<h2>Address reusage</h2>
+<h2>Address reuse</h2>
 
-<p>Address reusage strips the anonymity provided by CoinShuffle++.  It is
+<p>Address reuse strips the anonymity provided by CoinShuffle++.  It is
 imperative that addresses are never reused and that extended public keys of
 mixed and voting accounts are not revealed to other parties.</p>
 
