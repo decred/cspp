@@ -118,7 +118,7 @@ buyer1$ dcrctl --wallet importxpub mixed <em>mixed-xpub</em>
 </pre>
 
 The mixed ticket buying wallet may use the setup from the previous section.  The
-old wallet must be configured sligtly differently:
+old wallet must be configured slightly differently:
 
 <pre>
 buyer1$ dcrwallet {{template "service-config" .}} \
