@@ -117,7 +117,9 @@ func (c *client) send(msg interface{}, timeout time.Duration) (err error) {
 			err = fmt.Errorf("%v: send %T (%v:%v): %v", c.conn.LocalAddr(), msg, file, line, err)
 		}
 	}()
-	c.conn.SetWriteDeadline(time.Now().Add(timeout))
+	if err = c.conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
 	err = c.enc.Encode(msg)
 	if err != nil {
 		return err
@@ -126,10 +128,12 @@ func (c *client) send(msg interface{}, timeout time.Duration) (err error) {
 }
 
 func (c *client) recv(out interface{}, timeout time.Duration) error {
+	var deadline time.Time
 	if timeout != 0 {
-		c.conn.SetReadDeadline(time.Now().Add(timeout))
-	} else {
-		c.conn.SetReadDeadline(time.Time{})
+		deadline = time.Now().Add(timeout)
+	}
+	if err := c.conn.SetReadDeadline(deadline); err != nil {
+		return err
 	}
 	err := c.dec.Decode(out)
 	if err != nil {
