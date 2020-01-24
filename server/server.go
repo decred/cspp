@@ -501,7 +501,7 @@ func (s *session) exclude(blamed []int) error {
 		close(s.clients[pid].blamed)
 		s.excluded = append(s.excluded, s.clients[pid])
 		s.clients[pid].cancel()
-		s.clients[pid].Close()
+		s.clients[pid].conn.Close()
 		s.mtot -= s.clients[pid].pr.MessageCount
 		s.clients[pid] = nil
 	}
