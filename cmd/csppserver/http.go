@@ -9,10 +9,12 @@ import (
 )
 
 type indexHandler struct {
-	ServerName string
-	Address    string
-	Epoch      time.Duration
-	SelfSigned []byte
+	ServerName      string
+	OnionServerName string
+	Address         string
+	OnionAddress    string
+	Epoch           time.Duration
+	SelfSigned      []byte
 }
 
 func (h *indexHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +179,22 @@ CoinShuffle++ change.</p>
 <p>Address reuse strips the anonymity provided by CoinShuffle++.  It is
 imperative that addresses are never reused and that extended public keys of
 mixed and voting accounts are not revealed to other parties.</p>
+
+{{ if .OnionServerName }}
+<h2>Tor Hidden Service</h2>
+
+<p>The server is accessible as a Tor hidden service.  This can
+be configured using the following options:</p>
+
+<pre>
+$ dcrwallet --proxy=127.0.0.1:9050 \
+  --csppserver={{ .OnionAddress }} \
+  ...
+</pre>
+
+<p>In case <code>dcrwallet</code> connects to <code>dcrd</code> directly, the
+<code>--nodcrdproxy=1</code> option may be specified in addition to the above.</p>
+{{ end }}
 
 </main>
 </body>
