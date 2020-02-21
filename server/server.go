@@ -242,7 +242,9 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	dec := gob.NewDecoder(zr)
 	enc := gob.NewEncoder(zw)
 	pr := new(messages.PR)
-	conn.SetReadDeadline(time.Now().Add(recvTimeout))
+	if err := conn.SetReadDeadline(time.Now().Add(recvTimeout)); err != nil {
+		return err
+	}
 	err := dec.Decode(pr)
 	if err != nil {
 		return fmt.Errorf("read PR: %v", err)
@@ -300,7 +302,9 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	s.pairingsMu.Lock()
 	s.pairings[string(pr.PairCommitment)] = append(s.pairings[string(pr.PairCommitment)], c)
 	s.pairingsMu.Unlock()
-	conn.SetReadDeadline(time.Now().Add(pairTimeout))
+	if err := conn.SetReadDeadline(time.Now().Add(pairTimeout)); err != nil {
+		return err
+	}
 	var ses *session
 	ke := new(messages.KE)
 	readErr := make(chan error, 1)
@@ -1304,7 +1308,10 @@ func (c *client) raddr() net.Addr {
 // read reads a value from the gob decoder, without timeout, writing the error
 // result to ch.
 func (c *client) read(out interface{}, ch chan error) {
-	c.conn.SetReadDeadline(time.Time{})
+	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
+		ch <- err
+		return
+	}
 	ch <- c.dec.Decode(out)
 }
 
@@ -1318,13 +1325,17 @@ func (c *client) readDeadline(out interface{}, deadline time.Duration) (err erro
 		}
 	}()
 	log.Printf("awaiting(%v) %T", c.raddr(), out)
-	c.conn.SetReadDeadline(time.Now().Add(deadline))
+	if err = c.conn.SetReadDeadline(time.Now().Add(deadline)); err != nil {
+		return err
+	}
 	return c.dec.Decode(out)
 }
 
 // sendDeadline writes msg to the gob stream with a relative timeout.
 func (c *client) sendDeadline(msg interface{}, deadline time.Duration) (err error) {
-	c.conn.SetWriteDeadline(time.Now().Add(deadline))
+	if err = c.conn.SetWriteDeadline(time.Now().Add(deadline)); err != nil {
+		return err
+	}
 	log.Printf("send(%v) %T", c.raddr(), msg)
 	err = c.enc.Encode(msg)
 	if err != nil {
