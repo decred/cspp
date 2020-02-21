@@ -8,10 +8,10 @@ CoinShuffle++
 ## Overview
 
 This module provides client and server implementations to execute the
-[CoinShuffle++](https://crypsys.mmci.uni-saarland.de/projects/FastDC/paper.pdf)
-mixing protocol.  While intended to be used to create Decred CoinJoin
-transactions, the client and server packages are generic enough to anonymously
-mix and join elements of any group.
+[CoinShuffle++](https://decred.org/research/ruffing2016.pdf) mixing protocol.
+While intended to be used to create Decred CoinJoin transactions, the client and
+server packages are generic enough to anonymously mix and join elements of any
+group.
 
 This implementation differs from the protocol described by the CoinShuffle++
 paper in the following ways:
