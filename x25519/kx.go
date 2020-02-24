@@ -42,3 +42,8 @@ func (kx *KX) SharedKey(theirPublic *Public) []byte {
 	curve25519.ScalarMult(&sharedKey, (*[32]byte)(&kx.Scalar), (*[32]byte)(theirPublic))
 	return sharedKey[:]
 }
+
+// ValidScalar returns whether a secret X25519 scalar was properly constructed.
+func ValidScalar(s *Scalar) bool {
+	return s[0]&248 == s[0] && s[31]&127 == s[31] && s[31]|64 == s[31]
+}

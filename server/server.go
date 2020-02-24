@@ -1162,6 +1162,12 @@ KELoop:
 		}
 		b[i].kx = make([]*x25519.KX, 0, s.mtot)
 		for j := range c.rs.ECDH {
+			if !x25519.ValidScalar(c.rs.ECDH[j]) {
+				log.Printf("blaming %v for bad X25519 scalar", c.raddr())
+				blamed = append(blamed, i)
+				continue KELoop
+			}
+
 			b[i].kx = append(b[i].kx, &x25519.KX{
 				Public: *c.ke.ECDH[j],
 				Scalar: *c.rs.ECDH[j],
