@@ -390,6 +390,9 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				continue
 			}
 
+			// Make a copy for the session
+			clients = append(clients[:0:0], clients...)
+
 			pairCommitment := []byte(commitment)
 			newm := func() (Mixer, error) {
 				return s.newm(pairCommitment)
