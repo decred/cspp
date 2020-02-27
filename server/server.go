@@ -540,6 +540,11 @@ func (s *session) exclude(blamed []int) error {
 			clients = append(clients, c)
 		}
 	}
+	sort.Slice(clients, func(i, j int) bool {
+		id1 := clients[i].pr.Identity[:]
+		id2 := clients[j].pr.Identity[:]
+		return bytes.Compare(id1, id2) < 0
+	})
 	s.clients = clients
 	if len(s.clients) < minPeers {
 		return fmt.Errorf("too few peers (%v) to continue session", len(s.clients))
