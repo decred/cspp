@@ -492,9 +492,26 @@ func (s *session) start(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+func uniq(blamed []int) []int {
+	sort.Ints(blamed)
+	n := len(blamed)
+	blamed = blamed[:1]
+	last := blamed[0]
+	for _, pid := range blamed[1:n] {
+		if pid != last {
+			blamed = append(blamed, pid)
+			last = pid
+		}
+	}
+	return blamed
+}
+
 // exclude removes blamed peers from the session so the next run can proceed.
 // BRs are written to each remaining client's out channel to be sent by the handler.
 func (s *session) exclude(blamed []int) error {
+	// Remove duplicates
+	blamed = uniq(blamed)
+
 	defer s.mu.Unlock()
 	s.mu.Lock()
 
