@@ -509,6 +509,12 @@ func uniq(blamed []int) []int {
 // exclude removes blamed peers from the session so the next run can proceed.
 // BRs are written to each remaining client's out channel to be sent by the handler.
 func (s *session) exclude(blamed []int) error {
+	if len(blamed) == 0 {
+		// Should never happen, but gracefully abort the mix session
+		// instead of panicing if this bug occurs.
+		return errors.New("exclude called with no blamed peers")
+	}
+
 	// Remove duplicates
 	blamed = uniq(blamed)
 
