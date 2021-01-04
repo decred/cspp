@@ -258,7 +258,7 @@ func verifyOutput(c Caller, outpoint *wire.OutPoint, value int64) error {
 	var res struct {
 		Value float64 `json:"value"`
 	}
-	err := c.Call(ctx, "gettxout", &res, outpoint.Hash.String(), outpoint.Index)
+	err := c.Call(ctx, "gettxout", &res, outpoint.Hash.String(), outpoint.Index, outpoint.Tree)
 	if err != nil {
 		return err
 	}
