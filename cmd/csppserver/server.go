@@ -63,6 +63,8 @@ var (
 	reportFlag   = fs.String("report", "", "report stats of successful mixes to file")
 )
 
+const minFeeRate int64 = 0.0001e8
+
 func main() {
 	fs.Parse(os.Args[1:])
 
@@ -142,7 +144,7 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
-		return coinjoin.NewTx(rpc, sc, amount, txVersion, lockTime, expiry)
+		return coinjoin.NewTx(rpc, sc, amount, minFeeRate, txVersion, lockTime, expiry)
 	}
 	s, err := server.New(cspp.MessageSize, newm, *epochFlag)
 	if err != nil {

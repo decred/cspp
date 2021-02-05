@@ -57,7 +57,7 @@ type Mixer interface {
 // Joiner must be implemented by the Mixer when the server is used for CoinJoins.
 type Joiner interface {
 	Join(unmixed []byte, pid int) error
-	ValidateUnmixed(unmixed []byte) error
+	ValidateUnmixed(unmixed []byte, mcount int) error
 }
 
 // Shuffler shuffles all values (including non-anonymous) of a mix.
@@ -281,7 +281,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 		close(c.done)
 	}()
 	if j, ok := mix.(Joiner); ok {
-		err = j.ValidateUnmixed(pr.Unmixed)
+		err = j.ValidateUnmixed(pr.Unmixed, pr.MessageCount)
 		if err != nil {
 			c.sendDeadline(invalidUnmixed, sendTimeout)
 			return err

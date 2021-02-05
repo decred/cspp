@@ -50,6 +50,7 @@ type Tx struct {
 	sc        ScriptClass
 	inputPids []int
 	mixValue  int64
+	feeRate   int64
 	txVersion uint16
 	lockTime  uint32
 	expiry    uint32
@@ -113,6 +114,17 @@ func (sc ScriptClass) script(message []byte) []byte {
 	}
 }
 
+func (sc ScriptClass) scriptSize() int {
+	switch sc {
+	case P2PKHv0:
+		return 25
+	case P2SHv0:
+		return 23
+	default:
+		panic("unreachable")
+	}
+}
+
 func (sc ScriptClass) version() uint16 { return 0 }
 
 const descname = "coinjoin-decred"
@@ -158,7 +170,8 @@ func DecodeDesc(desc []byte) (sc ScriptClass, amount int64, txVersion uint16, lo
 	return
 }
 
-func NewTx(caller Caller, sc ScriptClass, amount int64, txVersion uint16, lockTime, expiry uint32) (*Tx, error) {
+func NewTx(caller Caller, sc ScriptClass, amount, feeRate int64, txVersion uint16,
+	lockTime, expiry uint32) (*Tx, error) {
 	if sc >= numScriptClasses {
 		return nil, errors.New("unknown script class")
 	}
@@ -167,6 +180,7 @@ func NewTx(caller Caller, sc ScriptClass, amount int64, txVersion uint16, lockTi
 		c:         caller,
 		sc:        sc,
 		mixValue:  amount,
+		feeRate:   feeRate,
 		txVersion: txVersion,
 		lockTime:  lockTime,
 		expiry:    expiry,
@@ -190,7 +204,23 @@ func (t *Tx) UnmarshalBinary(b []byte) error {
 	return t.Tx.Deserialize(bytes.NewReader(b))
 }
 
-func (t *Tx) ValidateUnmixed(unmixed []byte) error {
+func feeForSerializeSize(relayFeePerKb int64, txSerializeSize int) int64 {
+	fee := relayFeePerKb * int64(txSerializeSize) / 1000
+
+	if fee == 0 && relayFeePerKb > 0 {
+		fee = relayFeePerKb
+	}
+
+	const maxAmount = 21e6 * 1e8
+	if fee < 0 || fee > maxAmount {
+		fee = maxAmount
+	}
+
+	return fee
+}
+
+func (t *Tx) ValidateUnmixed(unmixed []byte, mcount int) error {
+	var fee int64
 	other := new(wire.MsgTx)
 	err := other.Deserialize(bytes.NewReader(unmixed))
 	if err != nil {
@@ -203,6 +233,7 @@ func (t *Tx) ValidateUnmixed(unmixed []byte) error {
 		if !t.sc.Match(out.PkScript, out.Version) {
 			return errors.New("coinjoin: different script class")
 		}
+		fee -= out.Value
 	}
 	for _, in := range other.TxIn {
 		if err := verifyOutput(t.c, &in.PreviousOutPoint, in.ValueIn); err != nil {
@@ -212,6 +243,20 @@ func (t *Tx) ValidateUnmixed(unmixed []byte) error {
 			}
 			return err
 		}
+		fee += in.ValueIn
+	}
+	fee -= int64(mcount) * t.mixValue
+	bogusMixedOut := &wire.TxOut{
+		Value:    t.mixValue,
+		Version:  t.sc.version(),
+		PkScript: make([]byte, t.sc.scriptSize()),
+	}
+	for i := 0; i < mcount; i++ {
+		other.AddTxOut(bogusMixedOut)
+	}
+	requiredFee := feeForSerializeSize(t.feeRate, other.SerializeSize())
+	if fee < requiredFee {
+		return errors.New("coinjoin: unmixed transaction does not pay enough network fees")
 	}
 	return nil
 }
