@@ -33,9 +33,13 @@ func init() {
 var nFlag = flag.Int64("n", 3, "node count")
 var mFlag = flag.Int("m", 4, "message-per-node count")
 var epochFlag = flag.Duration("epoch", 5*time.Second, "mix epoch")
+var inputValue int64
+var inputValueJSON []byte
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	inputValue = int64(*mFlag) + 1
+	inputValueJSON = []byte(fmt.Sprintf(`{"value":%v}`, inputValue))
 	os.Exit(m.Run())
 }
 
@@ -126,7 +130,7 @@ type itJustWorks struct{}
 func (itJustWorks) Call(ctx context.Context, method string, res interface{}, args ...interface{}) error {
 	switch method {
 	case "gettxout":
-		return json.Unmarshal([]byte(`{"value":5.0}`), res)
+		return json.Unmarshal(inputValueJSON, res)
 	case "sendrawtransaction":
 		return nil
 	default:
@@ -191,7 +195,7 @@ func TestHonest(t *testing.T) {
 	for i := range peers {
 		i := i
 		go func() {
-			input := &wire.TxIn{ValueIn: 5e8}
+			input := &wire.TxIn{ValueIn: inputValue * 1e8}
 			change := &wire.TxOut{Value: 1e8 - int64(1+i)*0.001e8, PkScript: change}
 			con := newConfirmer(input, change)
 			conn, err := tls.Dial("tcp", s.Addr, nettest.ClientTLS)
