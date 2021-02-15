@@ -97,14 +97,6 @@ type runState struct {
 	confCount uint32
 	rsCount   uint32
 
-	run      int
-	mtot     int
-	clients  []*client
-	excluded []*client
-	vk       []ed25519.PublicKey
-	mcounts  []int
-	roots    []*big.Int
-
 	allKEs   chan struct{}
 	allSRs   chan struct{}
 	allDCs   chan struct{}
@@ -116,7 +108,7 @@ type runState struct {
 }
 
 type session struct {
-	runState
+	runs []runState
 
 	sid    []byte
 	msgses *messages.Session
@@ -124,6 +116,14 @@ type session struct {
 	msize  int
 	newm   func() (Mixer, error)
 	mix    Mixer
+
+	run      int
+	mtot     int
+	clients  []*client
+	excluded []*client
+	vk       []ed25519.PublicKey
+	mcounts  []int
+	roots    []*big.Int
 
 	pids map[string]int
 	mu   sync.Mutex
@@ -422,28 +422,28 @@ func (s *Server) pairSessions(ctx context.Context) error {
 			}
 			sid := s.sidPRNG.Next(32)
 			ses := &session{
-				runState: runState{
-					allKEs:    make(chan struct{}),
-					allSRs:    make(chan struct{}),
-					allDCs:    make(chan struct{}),
-					allConfs:  make(chan struct{}),
-					allRSs:    make(chan struct{}),
-					mtot:      totalMessages,
-					clients:   clients,
-					vk:        vk,
-					mcounts:   mcounts,
-					blaming:   make(chan struct{}),
-					rerunning: make(chan struct{}),
-				},
-				sid:    sid,
-				msgses: messages.NewSession(sid, 0, vk),
-				br:     messages.BeginRun(vk, mcounts, sid),
-				msize:  s.msize,
-				newm:   newm,
-				mix:    mix,
-				pids:   pids,
-				report: s.report,
+				sid:     sid,
+				msgses:  messages.NewSession(sid, 0, vk),
+				br:      messages.BeginRun(vk, mcounts, sid),
+				msize:   s.msize,
+				newm:    newm,
+				mix:     mix,
+				mtot:    totalMessages,
+				clients: clients,
+				vk:      vk,
+				mcounts: mcounts,
+				pids:    pids,
+				report:  s.report,
 			}
+			ses.runs = append(ses.runs, runState{
+				allKEs:    make(chan struct{}),
+				allSRs:    make(chan struct{}),
+				allDCs:    make(chan struct{}),
+				allConfs:  make(chan struct{}),
+				allRSs:    make(chan struct{}),
+				blaming:   make(chan struct{}),
+				rerunning: make(chan struct{}),
+			})
 			pairs = append(pairs, ses)
 		}
 		s.pairingsMu.Unlock()
@@ -524,7 +524,7 @@ func (s *session) exclude(blamed []int) error {
 	defer s.mu.Unlock()
 	s.mu.Lock()
 
-	close(s.rerunning)
+	close(s.runs[s.run].rerunning)
 	s.run++
 
 	log.Printf("excluding %v", blamed)
@@ -574,22 +574,19 @@ func (s *session) exclude(blamed []int) error {
 		return err
 	}
 
-	s.keCount = 0
-	s.srCount = 0
-	s.dcCount = 0
-	s.confCount = 0
-	s.rsCount = 0
-	s.allKEs = make(chan struct{})
-	s.allSRs = make(chan struct{})
-	s.allDCs = make(chan struct{})
-	s.allConfs = make(chan struct{})
-	s.allRSs = make(chan struct{})
+	s.runs = append(s.runs, runState{
+		allKEs:    make(chan struct{}),
+		allSRs:    make(chan struct{}),
+		allDCs:    make(chan struct{}),
+		allConfs:  make(chan struct{}),
+		allRSs:    make(chan struct{}),
+		blaming:   make(chan struct{}),
+		rerunning: make(chan struct{}),
+	})
 	s.roots = nil
 	s.msgses = messages.NewSession(s.sid, s.run, s.vk)
 	s.br = messages.BeginRun(s.vk, s.mcounts, s.sid)
 	s.mix = mix
-	s.blaming = make(chan struct{})
-	s.rerunning = make(chan struct{})
 
 	for _, c := range s.clients {
 		select {
@@ -651,12 +648,13 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	}()
 
 	var blamed blamePIDs
+	st := &s.runs[s.run]
 
 	// Wait for all KE messages, or KE timeout.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-s.allKEs:
+	case <-st.allKEs:
 		log.Print("received all KE messages")
 	case <-time.After(recvTimeout):
 		log.Print("KE timeout")
@@ -699,7 +697,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-s.allSRs:
+	case <-st.allSRs:
 		log.Print("received all SR messages")
 	case <-time.After(recvTimeout):
 		log.Print("SR timeout")
@@ -707,7 +705,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 
 	// Solve roots.
 	s.mu.Lock()
-	blaming := s.blaming
+	blaming := st.blaming
 	vs := make([][]*big.Int, 0, len(s.clients))
 	for i, c := range s.clients {
 		if c.sr == nil {
@@ -748,7 +746,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-s.allDCs:
+	case <-st.allDCs:
 		log.Print("received all DC messages")
 	case <-time.After(recvTimeout):
 		log.Print("DC timeout")
@@ -805,7 +803,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-s.allConfs:
+	case <-st.allConfs:
 		log.Print("received all CM messages")
 	case <-time.After(recvTimeout):
 		log.Print("CM timeout")
@@ -899,13 +897,14 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	log.Printf("recv(%v) KE Run:%d Commitment:%x", c.raddr(), ke.Run, ke.Commitment)
 
 	s.mu.Lock()
+	st := &s.runs[run]
 	c.ke = ke
-	s.keCount++
-	if s.keCount == uint32(len(s.clients)) {
-		close(s.allKEs)
+	st.keCount++
+	if st.keCount == uint32(len(s.clients)) {
+		close(st.allKEs)
 	}
-	blaming := s.blaming
-	rerunning := s.rerunning
+	blaming := st.blaming
+	rerunning := st.rerunning
 	s.mu.Unlock()
 
 	select {
@@ -916,7 +915,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 		if err != nil {
 			return err
 		}
-		return c.blame(ctx, s)
+		return c.blame(ctx, s, run)
 	case kes := <-c.out:
 		err := c.sendDeadline(kes, sendTimeout)
 		if err != nil {
@@ -950,12 +949,12 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 		}
 	}
 	c.sr = sr
-	s.srCount++
-	if s.srCount == uint32(len(s.clients)) {
-		close(s.allSRs)
+	st.srCount++
+	if st.srCount == uint32(len(s.clients)) {
+		close(st.allSRs)
 	}
-	blaming = s.blaming
-	rerunning = s.rerunning
+	blaming = st.blaming
+	rerunning = st.rerunning
 	s.mu.Unlock()
 
 	select {
@@ -966,7 +965,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 		if err != nil {
 			return err
 		}
-		return c.blame(ctx, s)
+		return c.blame(ctx, s, run)
 	case mix := <-c.out:
 		err = c.sendDeadline(mix, sendTimeout)
 		if err != nil {
@@ -998,17 +997,17 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 
 	s.mu.Lock()
 	c.dc = dc
-	s.dcCount++
-	if s.dcCount == uint32(len(s.clients)) {
-		close(s.allDCs)
+	st.dcCount++
+	if st.dcCount == uint32(len(s.clients)) {
+		close(st.allDCs)
 	}
 	mix := c.mix
-	blaming = s.blaming
-	rerunning = s.rerunning
+	blaming = st.blaming
+	rerunning = st.rerunning
 	s.mu.Unlock()
 
 	if dc.RevealSecrets {
-		return c.blame(ctx, s)
+		return c.blame(ctx, s, run)
 	}
 
 	// Send unconfirmed mix
@@ -1020,7 +1019,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 		if err != nil {
 			return err
 		}
-		return c.blame(ctx, s)
+		return c.blame(ctx, s, run)
 	case mix := <-c.out:
 		err = c.sendDeadline(mix, sendTimeout)
 		if err != nil {
@@ -1044,16 +1043,16 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	s.mu.Lock()
 	c.cm = cm
 	c.mix = mix
-	s.confCount++
-	if s.confCount == uint32(len(s.clients)) {
-		close(s.allConfs)
+	st.confCount++
+	if st.confCount == uint32(len(s.clients)) {
+		close(st.allConfs)
 	}
-	blaming = s.blaming
-	rerunning = s.rerunning
+	blaming = st.blaming
+	rerunning = st.rerunning
 	s.mu.Unlock()
 
 	if cm.RevealSecrets {
-		return c.blame(ctx, s)
+		return c.blame(ctx, s, run)
 	}
 
 	// Send signed mix
@@ -1065,7 +1064,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 		if err != nil {
 			return err
 		}
-		return c.blame(ctx, s)
+		return c.blame(ctx, s, run)
 	case out := <-c.out:
 		err = c.sendDeadline(out, sendTimeout)
 		if err != nil {
@@ -1135,10 +1134,11 @@ func (s *session) blame(ctx context.Context, reported []int) (err error) {
 	}
 
 	// Wait for all secrets, or timeout.
+	st := &s.runs[s.run]
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-s.allRSs:
+	case <-st.allRSs:
 		log.Print("received all RS messages")
 	case <-time.After(5000 * time.Millisecond):
 		s.mu.Lock()
@@ -1307,7 +1307,7 @@ DCLoop:
 
 var errRerun = errors.New("rerun")
 
-func (c *client) blame(ctx context.Context, s *session) error {
+func (c *client) blame(ctx context.Context, s *session, run int) error {
 	rs := new(messages.RS)
 	err := c.readDeadline(rs, recvTimeout)
 	if err != nil {
@@ -1315,10 +1315,11 @@ func (c *client) blame(ctx context.Context, s *session) error {
 	}
 
 	s.mu.Lock()
+	st := &s.runs[run]
 	c.rs = rs
-	s.rsCount++
-	if s.rsCount == uint32(len(s.clients)) {
-		close(s.allRSs)
+	st.rsCount++
+	if st.rsCount == uint32(len(s.clients)) {
+		close(st.allRSs)
 	}
 	s.mu.Unlock()
 
