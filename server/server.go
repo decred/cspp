@@ -650,7 +650,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 		s.reportCompletedMix()
 	}()
 
-	var timedOut blamePIDs
+	var blamed blamePIDs
 
 	// Wait for all KE messages, or KE timeout.
 	select {
@@ -669,24 +669,23 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	}
 	for i, c := range s.clients {
 		if c.ke == nil {
-			timedOut = append(timedOut, i)
+			blamed = append(blamed, i)
 			continue
 		}
 		kes.KEs = append(kes.KEs, c.ke)
 		if joiner, ok := s.mix.(Joiner); ok {
 			err := joiner.Join(c.pr.Unmixed, i)
 			if err != nil {
-				s.mu.Unlock()
-				return err
+				blamed = append(blamed, i)
 			}
 		} else if len(c.pr.Unmixed) != 0 {
 			s.mu.Unlock()
 			return fmt.Errorf("%T cannot join unmixed data", s.mix)
 		}
 	}
-	if len(timedOut) != 0 {
+	if len(blamed) != 0 {
 		s.mu.Unlock()
-		return timedOut
+		return blamed
 	}
 	for _, c := range s.clients {
 		select {
@@ -712,14 +711,14 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	vs := make([][]*big.Int, 0, len(s.clients))
 	for i, c := range s.clients {
 		if c.sr == nil {
-			timedOut = append(timedOut, i)
+			blamed = append(blamed, i)
 			continue
 		}
 		vs = append(vs, c.sr.DCMix...)
 	}
-	if len(timedOut) != 0 {
+	if len(blamed) != 0 {
 		s.mu.Unlock()
-		return timedOut
+		return blamed
 	}
 	powerSums := dcnet.AddVectors(vs...)
 	coeffs := dcnet.Coefficients(powerSums)
@@ -760,7 +759,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	dcVecs := make([]*dcnet.Vec, 0, s.mtot)
 	for i, c := range s.clients {
 		if c.dc == nil {
-			timedOut = append(timedOut, i)
+			blamed = append(blamed, i)
 			continue
 		}
 		if c.dc.RevealSecrets {
@@ -769,8 +768,8 @@ func (s *session) doRun(ctx context.Context) (err error) {
 		dcVecs = append(dcVecs, c.dc.DCNet...)
 	}
 	s.mu.Unlock()
-	if len(timedOut) != 0 {
-		return timedOut
+	if len(blamed) != 0 {
+		return blamed
 	}
 	if len(reportedFailure) > 0 {
 		close(blaming)
@@ -815,16 +814,16 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	s.mu.Lock()
 	for i, c := range s.clients {
 		if c.cm == nil {
-			timedOut = append(timedOut, i)
+			blamed = append(blamed, i)
 			continue
 		}
 		if c.cm.RevealSecrets {
 			reportedFailure = append(reportedFailure, i)
 		}
 	}
-	if len(timedOut) != 0 {
+	if len(blamed) != 0 {
 		s.mu.Unlock()
-		return timedOut
+		return blamed
 	}
 	if len(reportedFailure) > 0 {
 		close(blaming)
