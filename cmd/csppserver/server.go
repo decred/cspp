@@ -55,6 +55,7 @@ var (
 	httpFlag     = fs.String("http", "", "listen address for public webserver (no TLS)")
 	httpsFlag    = fs.String("https", ":443", "listen address for public webserver (uses same TLS config as from cspp listener)")
 	epochFlag    = fs.Duration("epoch", 5*time.Minute, "mixing epoch")
+	minPeersFlag = fs.Int("minpeers", 3, "minimum number of compatible peers for a mix to start")
 	dcrdWSFlag   = fs.String("dcrd.ws", "wss://localhost:9109/ws", "dcrd websocket")
 	dcrdCAFlag   = fs.String("dcrd.ca", defaultDcrdCA(), "dcrd certificate authority")
 	dcrdUserFlag = fs.String("dcrd.user", "", "dcrd RPC username; uses DCRDUSER environment variable if unset")
@@ -70,6 +71,10 @@ func main() {
 
 	log.Printf("Starting csppserver")
 	log.Printf("Go version %s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH)
+
+	if *minPeersFlag < 3 {
+		log.Fatal("-minpeers must not be less than 3")
+	}
 
 	if *pprofFlag != "" {
 		mux := http.NewServeMux()
@@ -150,6 +155,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	s.SetMinPeers(*minPeersFlag)
 	if *reportFlag != "" {
 		fi, err := os.OpenFile(*reportFlag, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {

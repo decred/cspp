@@ -35,7 +35,6 @@ const (
 	pairTimeout = 24 * time.Hour
 	sendTimeout = time.Second
 	recvTimeout = 5 * time.Second
-	minPeers    = 3
 )
 
 // Mixer is any binary-representable data which can add mixed messages and be
@@ -84,6 +83,7 @@ type Server struct {
 	msize      int
 	newm       NewMixer
 	epoch      time.Duration
+	minPeers   int
 	pairings   map[string][]*client
 	pairingsMu sync.Mutex
 
@@ -114,6 +114,7 @@ type session struct {
 	msgses *messages.Session
 	br     *messages.BR
 	msize  int
+	minp   int
 	newm   func() (Mixer, error)
 	mix    Mixer
 
@@ -172,6 +173,7 @@ func New(msize int, newm NewMixer, epoch time.Duration) (*Server, error) {
 		msize:    msize,
 		newm:     newm,
 		epoch:    epoch,
+		minPeers: 3,
 		pairings: make(map[string][]*client),
 	}
 	return s, nil
@@ -179,6 +181,10 @@ func New(msize int, newm NewMixer, epoch time.Duration) (*Server, error) {
 
 func (s *Server) SetReportEncoder(enc *json.Encoder) {
 	s.report = enc
+}
+
+func (s *Server) SetMinPeers(min int) {
+	s.minPeers = min
 }
 
 // Run executes the server, listening on lis for new client connections.
@@ -386,7 +392,7 @@ func (s *Server) pairSessions(ctx context.Context) error {
 		var pairs []*session
 		s.pairingsMu.Lock()
 		for commitment, clients := range s.pairings {
-			if len(clients) < minPeers {
+			if len(clients) < s.minPeers {
 				continue
 			}
 
@@ -426,6 +432,7 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				msgses:  messages.NewSession(sid, 0, vk),
 				br:      messages.BeginRun(vk, mcounts, sid),
 				msize:   s.msize,
+				minp:    s.minPeers,
 				newm:    newm,
 				mix:     mix,
 				mtot:    totalMessages,
@@ -549,8 +556,9 @@ func (s *session) exclude(blamed []int) error {
 		return bytes.Compare(id1, id2) < 0
 	})
 	s.clients = clients
-	if len(s.clients) < minPeers {
-		return fmt.Errorf("too few peers (%v) to continue session", len(s.clients))
+	if len(s.clients) < s.minp {
+		return fmt.Errorf("too few peers (%v < %v) to continue session",
+			len(s.clients), s.minp)
 	}
 	s.vk = s.vk[:len(s.clients)]
 	s.mcounts = s.mcounts[:len(s.clients)]
