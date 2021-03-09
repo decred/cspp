@@ -29,10 +29,6 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 )
 
-func init() {
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-}
-
 func defaultDcrdCA() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
