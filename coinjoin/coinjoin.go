@@ -219,6 +219,11 @@ func feeForSerializeSize(relayFeePerKb int64, txSerializeSize int) int64 {
 	return fee
 }
 
+func paysHighFees(relayFeePerKb, fee int64, txSerializeSize int) bool {
+	maxFee := feeForSerializeSize(50*relayFeePerKb, txSerializeSize)
+	return fee > maxFee
+}
+
 func (t *Tx) ValidateUnmixed(unmixed []byte, mcount int) error {
 	var fee int64
 	other := new(wire.MsgTx)
@@ -254,10 +259,15 @@ func (t *Tx) ValidateUnmixed(unmixed []byte, mcount int) error {
 	for i := 0; i < mcount; i++ {
 		other.AddTxOut(bogusMixedOut)
 	}
-	requiredFee := feeForSerializeSize(t.feeRate, other.SerializeSize())
+	size := other.SerializeSize()
+	requiredFee := feeForSerializeSize(t.feeRate, size)
 	if fee < requiredFee {
 		return errors.New("coinjoin: unmixed transaction does not pay enough network fees")
 	}
+	if paysHighFees(t.feeRate, fee, size) {
+		return errors.New("coinjoin: unmixed transaction pays insanely high fees")
+	}
+
 	return nil
 }
 
