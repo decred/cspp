@@ -166,7 +166,7 @@ func (v *Vec) String() string {
 // SharedKeys creates the SR and DC shared secret keys for mcount mixes, where
 // indexes [start, start+mcount) are a peer's pre-assigned non-anonymous
 // positions.
-func SharedKeys(secrets []*x25519.KX, publics []*x25519.Public, sid []byte, msize, run, start, mcount int) (sr [][][]byte, dc [][]*Vec) {
+func SharedKeys(secrets []*x25519.KX, publics []*x25519.Public, sid []byte, msize, run, start, mcount int) (sr [][][]byte, dc [][]*Vec, err error) {
 	sr = make([][][]byte, mcount)
 	dc = make([][]*Vec, mcount)
 	mtot := len(publics)
@@ -178,10 +178,14 @@ func SharedKeys(secrets []*x25519.KX, publics []*x25519.Public, sid []byte, msiz
 			if from == my {
 				continue
 			}
-
+			var sharedKey []byte
+			sharedKey, err = secrets[i].SharedKey(pub)
+			if err != nil {
+				return
+			}
 			h := blake256.New()
 			h.Write(sid)
-			h.Write(secrets[i].SharedKey(pub))
+			h.Write(sharedKey)
 			prngSeed := h.Sum(nil)
 			prng := chacha20prng.New(prngSeed, uint32(run))
 

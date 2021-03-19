@@ -128,6 +128,7 @@ func ke(t *testing.T, n []SRNode) {
 			}
 		}
 	}
+	var err error
 	for i := range n {
 		n[i].SharedKeys = make([]*Vec, len(n))
 		for j := range n {
@@ -135,7 +136,10 @@ func ke(t *testing.T, n []SRNode) {
 				continue
 			}
 			prng := chacha20prng.New(n[i].Kp[j], 0)
-			n[i].SharedKeys[j] = SharedKeys(prng, len(n), 20)
+			n[i].SharedKeys[j], err = SharedKeys(prng, len(n), 20)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
 		}
 	}
 }
