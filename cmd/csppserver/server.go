@@ -210,7 +210,7 @@ func setupTLS() (tc *tls.Config, selfsignedCert []byte, alternateServerNames []s
 			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		},
-		NextProtos: []string{acme.ALPNProto},
+		NextProtos: []string{"h2", acme.ALPNProto},
 	}
 	tlsFlag := *tlsFlag
 	switch {
