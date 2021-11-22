@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"flag"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -21,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"decred.org/cspp"
-	"decred.org/cspp/coinjoin"
-	"decred.org/cspp/server"
+	"decred.org/cspp/v2"
+	"decred.org/cspp/v2/coinjoin"
+	"decred.org/cspp/v2/server"
 	"github.com/jrick/wsrpc/v2"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
@@ -284,7 +283,7 @@ func setupTLS() (tc *tls.Config, selfsignedCert []byte, alternateServerNames []s
 }
 
 func setupRPC(ctx context.Context) func() (*wsrpc.Client, error) {
-	dcrdCA, err := ioutil.ReadFile(*dcrdCAFlag)
+	dcrdCA, err := os.ReadFile(*dcrdCAFlag)
 	if err != nil {
 		log.Fatal(err)
 	}

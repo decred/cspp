@@ -128,7 +128,7 @@ func (sc ScriptClass) scriptSize() int {
 
 func (sc ScriptClass) version() uint16 { return 0 }
 
-const descname = "coinjoin-decred"
+const descname = "coinjoin-decred-v2"
 
 // EncodeDesc encodes a description defining the parameters for a Decred coinjoin.
 func EncodeDesc(sc ScriptClass, amount int64, txVersion uint16, lockTime, expiry uint32) []byte {

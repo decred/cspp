@@ -3,7 +3,6 @@ package cspp
 
 import (
 	"bytes"
-	"compress/flate"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -20,9 +19,11 @@ import (
 	"sort"
 	"time"
 
-	"decred.org/cspp/dcnet"
-	"decred.org/cspp/messages"
-	"decred.org/cspp/x25519"
+	"decred.org/cspp/v2/chacha20prng"
+	"decred.org/cspp/v2/dcnet"
+	"decred.org/cspp/v2/messages"
+	"decred.org/cspp/v2/x25519"
+	"github.com/companyzero/sntrup4591761"
 	"golang.org/x/crypto/ed25519"
 )
 
@@ -72,40 +73,53 @@ type Session struct {
 
 	rand     io.Reader
 	genConf  GenConfirmer
-	freshGen bool         // Whether next run must generate fresh x25519 keys, SR/DC messages
-	kx       []*x25519.KX // key exchange
-	srMsg    []*big.Int   // random numbers to be exponential slot reservation mix
-	dcMsg    [][]byte     // anonymized messages to publish
+	mcount   int
+	freshGen bool // Whether next run must generate fresh KX keys, SR/DC messages
+
+	kx       *dcnet.KX
+	prngSeed []byte
+	prng     *chacha20prng.Reader
+
+	srMsg []*big.Int // random numbers to be exponential slot reservation mix
+	dcMsg [][]byte   // anonymized messages to publish
 
 	client *client
 	sid    []byte
-	vk     []ed25519.PublicKey // session pubkeys
-	mcount int
-	mtot   int
 
 	log        Logger
 	commitment []byte
+}
 
-	myVk    int
-	myStart int
-	myEnd   int
+type run struct {
+	session *Session
+	run     int
+
+	// Peer information
+	vk      []ed25519.PublicKey // session pubkeys
+	mcounts []int
+	my      int // this client's non-anonymous index
+	mtot    int
+
+	// Exponential slot reservation mix
+	srKP  [][][]byte // shared keys for exp dc-net
+	srMix [][]*big.Int
+
+	// XOR DC-net
+	dcKP  [][]*dcnet.Vec
+	dcNet []*dcnet.Vec
 }
 
 type client struct {
 	conn net.Conn
-	zw   *flate.Writer
 	dec  *gob.Decoder
 	enc  *gob.Encoder
 }
 
 func newClient(conn net.Conn) *client {
-	zr := flate.NewReader(conn)
-	zw, _ := flate.NewWriter(conn, flate.DefaultCompression)
 	return &client{
 		conn: conn,
-		zw:   zw,
-		dec:  gob.NewDecoder(zr),
-		enc:  gob.NewEncoder(zw),
+		dec:  gob.NewDecoder(conn),
+		enc:  gob.NewEncoder(conn),
 	}
 }
 
@@ -120,11 +134,7 @@ func (c *client) send(msg interface{}, timeout time.Duration) (err error) {
 	if err = c.conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 		return err
 	}
-	err = c.enc.Encode(msg)
-	if err != nil {
-		return err
-	}
-	return c.zw.Flush()
+	return c.enc.Encode(msg)
 }
 
 func (c *client) recv(out interface{}, timeout time.Duration) error {
@@ -148,19 +158,6 @@ func (c *client) recv(out interface{}, timeout time.Duration) error {
 		}
 	}
 	return nil
-}
-
-type run struct {
-	session *Session
-	run     int
-
-	// Exponential slot reservation mix
-	srKP  [][][]byte // shared keys for exp dc-net
-	srMix [][]*big.Int
-
-	// XOR DC-net
-	dcKP  [][]*dcnet.Vec
-	dcNet []*dcnet.Vec
 }
 
 // Logger writes client logs.
@@ -254,6 +251,7 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	var totalMessages int
 	myVk := -1
 	myStart := -1
+	mcounts := make([]int, len(vk))
 	for i := range vk {
 		if bytes.Equal(vk[i], s.Pk) {
 			myVk = i
@@ -266,37 +264,43 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 			return errors.New("non-positive message count")
 		}
 		totalMessages += br.MessageCounts[i]
+		mcounts[i] = br.MessageCounts[i]
 	}
 	if myVk == -1 {
 		return errors.New("my index is not in vk slice")
 	}
 	s.sid = sid
-	s.vk = vk
-	s.mtot = totalMessages
-	s.myVk = myVk
-	s.myStart = myStart
-	s.myEnd = myStart + s.mcount
 
-	ses := messages.NewSession(s.sid, n, s.vk)
+	ses := messages.NewSession(s.sid, n, s.Sk, vk)
 
-	r := &run{session: s, run: n}
+	r := &run{
+		session: s,
+		run:     n,
+		mtot:    totalMessages,
+		mcounts: mcounts,
+		vk:      vk,
+		my:      myVk,
+	}
+	s.prngSeed = make([]byte, 32)
+	_, err := io.ReadFull(s.rand, s.prngSeed)
+	if err != nil {
+		return err
+	}
+	s.prng = chacha20prng.New(s.prngSeed, uint32(r.run))
 	if n == 0 || s.freshGen {
 		s.freshGen = false
 
-		// Generate fresh x25519 keys
-		s.kx = make([]*x25519.KX, s.mcount)
+		// Generate fresh x25519, sntrup4591761 keys from this run's PRNG
 		var err error
-		for i := range s.kx {
-			s.kx[i], err = x25519.New(s.rand)
-			if err != nil {
-				return err
-			}
+		s.kx, err = dcnet.NewKX(s.prng)
+		if err != nil {
+			return err
 		}
 
 		// Generate fresh SR messages
 		s.srMsg = make([]*big.Int, s.mcount)
 		for i := range s.srMsg {
-			s.srMsg[i], err = rand.Int(rand.Reader, dcnet.F)
+			s.srMsg[i], err = rand.Int(s.rand, dcnet.F)
 			if err != nil {
 				return err
 			}
@@ -319,13 +323,9 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	s.log.Printf("SR msg: %x; DC msg: %x", s.srMsg, s.dcMsg)
 
 	// Perform key exchange
-	pubs := make([]*x25519.Public, len(s.kx))
-	for i := range pubs {
-		pubs[i] = &s.kx[i].Public
-	}
-	rs := messages.RevealSecrets(s.kx, s.srMsg, s.dcMsg)
-	ke := messages.KeyExchange(pubs, rs.Commit(ses), ses)
-	err := s.client.send(ke, sendTimeout)
+	rs := messages.RevealSecrets(s.prngSeed, s.srMsg, s.dcMsg, ses)
+	ke := messages.KeyExchange(s.kx, rs.Commit(ses), ses)
+	err = s.client.send(ke, sendTimeout)
 	if err != nil {
 		return err
 	}
@@ -339,24 +339,54 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 		return &beginRerun{&kes.BR}
 	}
 	s.log.Printf("received KEs")
-	ecdh := make([]*x25519.Public, 0, s.mtot)
+	ecdh := make([]*x25519.Public, 0, len(r.vk))
+	pqpk := make([]*[sntrup4591761.PublicKeySize]byte, 0, len(r.vk))
 	for _, ke := range kes.KEs {
 		if ke == nil {
 			continue
 		}
-		ecdh = append(ecdh, ke.ECDH...)
+		ecdh = append(ecdh, ke.ECDH)
+		pqpk = append(pqpk, ke.PQPK)
 	}
-	if len(ecdh) != s.mtot {
+	if len(ecdh) != len(r.vk) {
 		return errors.New("wrong total ECDH public count")
+	}
+	if len(pqpk) != len(r.vk) {
+		return errors.New("wrong total PQ public key count")
+	}
+
+	// Create shared key and ciphertexts for each peer
+	pqct, err := s.kx.Encapsulate(s.prng, pqpk, r.my)
+	if err != nil {
+		return err
+	}
+
+	// Send and receive ciphertext messages.
+	ct := messages.Ciphertexts(pqct, ses)
+	err = s.client.send(ct, sendTimeout)
+	if err != nil {
+		return err
+	}
+	var cts messages.CTs
+	err = s.client.recv(&cts, recvTimeout)
+	if err != nil {
+		return err
+	}
+	if len(cts.BR.Vk) != 0 {
+		return &beginRerun{&cts.BR}
 	}
 
 	// Derive shared secret keys
-	r.srKP, r.dcKP = dcnet.SharedKeys(s.kx, ecdh, s.sid, MessageSize, r.run, s.myStart, s.mcount)
+	r.srKP, r.dcKP, err = dcnet.SharedKeys(s.kx, ecdh, cts.Ciphertexts, s.sid,
+		MessageSize, r.run, r.my, r.mcounts)
+	if err != nil {
+		return err
+	}
 
 	// Calculate slot reservation DC-net vectors
 	r.srMix = make([][]*big.Int, s.mcount)
 	for i := 0; i < s.mcount; i++ {
-		pads := dcnet.SRMixPads(r.srKP[i], s.myStart+i)
+		pads := dcnet.SRMixPads(r.srKP[i], myStart+i)
 		r.srMix[i] = dcnet.SRMix(s.srMsg[i], pads)
 	}
 
@@ -401,7 +431,7 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 
 	r.dcNet = make([]*dcnet.Vec, s.mcount)
 	for i, slot := range slots {
-		my := s.myStart + i
+		my := myStart + i
 		pads := dcnet.DCMixPads(r.dcKP[i], MessageSize, my)
 		r.dcNet[i] = dcnet.DCMix(pads, s.dcMsg[i], slot)
 	}
@@ -434,7 +464,7 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 		}
 		return err
 	}
-	cm = messages.ConfirmMix(s.genConf)
+	cm = messages.ConfirmMix(s.Sk, s.genConf)
 	err = s.client.send(cm, sendTimeout)
 	if err != nil {
 		return err
@@ -486,6 +516,7 @@ func (s *Session) serverRunFail(ctx context.Context, rs *messages.RS) error {
 	return errRerun
 }
 
+// XXX must send the proper message type, with valid signature for that type
 func (s *Session) clientRunFail(ctx context.Context, rs *messages.RS) error {
 	if ctx.Err() != nil {
 		return ctx.Err()

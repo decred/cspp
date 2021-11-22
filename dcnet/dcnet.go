@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math/big"
 	"strings"
 
-	"decred.org/cspp/chacha20prng"
-	"decred.org/cspp/x25519"
+	"decred.org/cspp/v2/chacha20prng"
+	"decred.org/cspp/v2/x25519"
+	"github.com/companyzero/sntrup4591761"
 	"github.com/decred/dcrd/crypto/blake256"
 )
 
@@ -163,33 +165,166 @@ func (v *Vec) String() string {
 	return b.String()
 }
 
-// SharedKeys creates the SR and DC shared secret keys for mcount mixes, where
-// indexes [start, start+mcount) are a peer's pre-assigned non-anonymous
-// positions.
-func SharedKeys(secrets []*x25519.KX, publics []*x25519.Public, sid []byte, msize, run, start, mcount int) (sr [][][]byte, dc [][]*Vec) {
+// Aliases for sntrup4591761 types
+type (
+	PQSecretKey  = [sntrup4591761.PrivateKeySize]byte
+	PQPublicKey  = [sntrup4591761.PublicKeySize]byte
+	PQCiphertext = [sntrup4591761.CiphertextSize]byte
+)
+
+// KX contains the client public and secret keys to perform shared key exchange
+// with other peers.
+type KX struct {
+	X25519       *x25519.KX
+	PQPublic     *[sntrup4591761.PublicKeySize]byte
+	PQSecret     *[sntrup4591761.PrivateKeySize]byte
+	PQCleartexts []*[sntrup4591761.SharedKeySize]byte
+}
+
+// NewKX generates X25519 and Sntrup4591761 public and secret keys from a PRNG.
+func NewKX(prng io.Reader) (*KX, error) {
+	kx := new(KX)
+	var err error
+	kx.X25519, err = x25519.New(prng)
+	if err != nil {
+		return nil, err
+	}
+	pk, sk, err := sntrup4591761.GenerateKey(prng)
+	if err != nil {
+		return nil, err
+	}
+	kx.PQPublic = pk
+	kx.PQSecret = sk
+	return kx, nil
+}
+
+// Encapsulate performs encapsulation for sntrup4591761 key exchanges with each
+// other peer in the DC-net.  It populates the PQCleartexts field of kx and
+// return encrypted cyphertexts of these shared keys.
+//
+// Encapsulation in the DC-net requires randomness from a CSPRNG seeded by a
+// committed secret; blame assignment is not possible otherwise.
+func (kx *KX) Encapsulate(prng io.Reader, pubkeys []*PQPublicKey, my int) ([]*PQCiphertext, error) {
+	cts := make([]*[sntrup4591761.CiphertextSize]byte, len(pubkeys))
+	kx.PQCleartexts = make([]*[32]byte, len(pubkeys))
+
+	for i, pk := range pubkeys {
+		ciphertext, cleartext, err := sntrup4591761.Encapsulate(prng, pk)
+		if err != nil {
+			return nil, err
+		}
+		cts[i] = ciphertext
+		kx.PQCleartexts[i] = cleartext
+	}
+
+	return cts, nil
+}
+
+// SharedKeys creates the pairwise SR and DC shared secret keys for
+// mcounts[myvk] mixes.  ecdhPubs, cts, and mcounts must all share the same
+// slice length.
+func SharedKeys(kx *KX, ecdhPubs []*x25519.Public, cts []*PQCiphertext, sid []byte, msize, run, myvk int, mcounts []int) (sr [][][]byte, dc [][]*Vec, err error) {
+	if len(ecdhPubs) != len(mcounts) {
+		panic("number of x25519 public keys must match total number of peers")
+	}
+	if len(cts) != len(mcounts) {
+		panic("number of ciphertexts must match total number of peers")
+	}
+
+	mcount := mcounts[myvk]
+	var mtot int
+	for i := range mcounts {
+		mtot += mcounts[i]
+	}
+
+	h := blake256.New()
 	sr = make([][][]byte, mcount)
 	dc = make([][]*Vec, mcount)
-	mtot := len(publics)
+
 	for i := 0; i < mcount; i++ {
-		my := start + i
 		sr[i] = make([][]byte, mtot)
 		dc[i] = make([]*Vec, mtot)
-		for from, pub := range publics {
-			if from == my {
+		var m int
+		for peer := 0; peer < len(mcounts); peer++ {
+			if peer == myvk && mcount == 1 {
+				m++
 				continue
 			}
 
-			h := blake256.New()
-			h.Write(sid)
-			h.Write(secrets[i].SharedKey(pub))
-			prngSeed := h.Sum(nil)
-			prng := chacha20prng.New(prngSeed, uint32(run))
+			x25519Pub := ecdhPubs[peer]
+			sharedKey := kx.X25519.SharedKey(x25519Pub)
+			pqSharedKey, ok := sntrup4591761.Decapsulate(cts[peer], kx.PQSecret)
+			if ok != 1 {
+				err = fmt.Errorf("sntrup4591761: decapsulate failure")
+				return
+			}
 
-			sr[i][from] = prng.Next(32)
-			dc[i][from] = &Vec{
-				N:     mtot,
-				Msize: msize,
-				Data:  prng.Next(mtot * msize),
+			// XOR x25519 and both sntrup4591761 keys into a single
+			// shared key. If sntrup4591761 is discovered to be
+			// broken in the future, the security only reduces to
+			// that of x25519.
+			// If the message belongs to our own peer, only XOR
+			// the sntrup4591761 key once.  The decapsulated and
+			// cleartext keys are equal in this case, and would
+			// cancel each other out otherwise.
+			xor := func(dst, src []byte) {
+				if len(dst) != len(src) {
+					panic("dcnet: different lengths in xor")
+				}
+				for i := range dst {
+					dst[i] ^= src[i]
+				}
+			}
+			xor(sharedKey, pqSharedKey[:])
+			if peer != myvk {
+				xor(sharedKey, kx.PQCleartexts[peer][:])
+			}
+
+			// Create the prefix of a PRNG seed preimage.  A counter
+			// will be appended before creating each PRNG, one for
+			// each message pair.
+			prngSeedPreimage := make([]byte, len(sid)+len(sharedKey)+4)
+			l := copy(prngSeedPreimage, sid)
+			l += copy(prngSeedPreimage[l:], sharedKey)
+			seedCounterBytes := prngSeedPreimage[l:]
+
+			// Read from the PRNG to create shared keys for each
+			// message the peer is mixing.
+			for j := 0; j < mcounts[peer]; j++ {
+				if myvk == peer && j == i {
+					m++
+					continue
+				}
+
+				// Create the PRNG seed using the combined shared key.
+				// A unique seed is generated for each message pair,
+				// determined using the message index of the peer with
+				// the lower peer index.  The PRNG nonce is the message
+				// number of the peer with the higher peer index.
+				// When creating shared keys with our own peer, the PRNG
+				// seed counter and nonce must be reversed for the second
+				// half of our generated keys.
+				seedCounter := i
+				nonce := j
+				if myvk > peer || (myvk == peer && j > i) {
+					seedCounter = j
+					nonce = i
+				}
+				binary.LittleEndian.PutUint32(seedCounterBytes, uint32(seedCounter))
+
+				h.Reset()
+				h.Write(prngSeedPreimage)
+				prngSeed := h.Sum(nil)
+				prng := chacha20prng.New(prngSeed, uint32(nonce))
+
+				sr[i][m] = prng.Next(32)
+				dc[i][m] = &Vec{
+					N:     mtot,
+					Msize: msize,
+					Data:  prng.Next(mtot * msize),
+				}
+
+				m++
 			}
 		}
 	}

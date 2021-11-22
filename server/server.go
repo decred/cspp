@@ -3,7 +3,6 @@ package server
 
 import (
 	"bytes"
-	"compress/flate"
 	"context"
 	"crypto/rand"
 	"encoding"
@@ -22,11 +21,11 @@ import (
 	"sync"
 	"time"
 
-	"decred.org/cspp/chacha20prng"
-	"decred.org/cspp/dcnet"
-	"decred.org/cspp/messages"
-	"decred.org/cspp/solver"
-	"decred.org/cspp/x25519"
+	"decred.org/cspp/v2/chacha20prng"
+	"decred.org/cspp/v2/dcnet"
+	"decred.org/cspp/v2/messages"
+	"decred.org/cspp/v2/solver"
+	"decred.org/cspp/v2/x25519"
 	"golang.org/x/crypto/ed25519"
 	"golang.org/x/sync/errgroup"
 )
@@ -92,12 +91,14 @@ type Server struct {
 
 type runState struct {
 	keCount   uint32
+	ctCount   uint32
 	srCount   uint32
 	dcCount   uint32
 	confCount uint32
 	rsCount   uint32
 
 	allKEs   chan struct{}
+	allCTs   chan struct{}
 	allSRs   chan struct{}
 	allDCs   chan struct{}
 	allConfs chan struct{}
@@ -134,12 +135,12 @@ type session struct {
 
 type client struct {
 	conn   net.Conn
-	zw     *flate.Writer
 	dec    *gob.Decoder // decodes from conn
 	enc    *gob.Encoder // encodes to conn
 	sesc   chan *session
 	pr     *messages.PR
 	ke     *messages.KE
+	ct     *messages.CT
 	sr     *messages.SR
 	dc     *messages.DC
 	cm     *messages.CM
@@ -243,10 +244,8 @@ func (s *Server) Run(ctx context.Context, lis net.Listener) error {
 
 func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	// Read pairing request
-	zr := flate.NewReader(conn)
-	zw, _ := flate.NewWriter(conn, flate.DefaultCompression)
-	dec := gob.NewDecoder(zr)
-	enc := gob.NewEncoder(zw)
+	dec := gob.NewDecoder(conn)
+	enc := gob.NewEncoder(conn)
 	pr := new(messages.PR)
 	if err := conn.SetReadDeadline(time.Now().Add(recvTimeout)); err != nil {
 		return err
@@ -271,7 +270,6 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	defer cancel()
 	c := &client{
 		conn:   conn,
-		zw:     zw,
 		dec:    dec,
 		enc:    enc,
 		sesc:   make(chan *session, 1),
@@ -429,7 +427,7 @@ func (s *Server) pairSessions(ctx context.Context) error {
 			sid := s.sidPRNG.Next(32)
 			ses := &session{
 				sid:     sid,
-				msgses:  messages.NewSession(sid, 0, vk),
+				msgses:  messages.NewSession(sid, 0, nil, vk),
 				br:      messages.BeginRun(vk, mcounts, sid),
 				msize:   s.msize,
 				minp:    s.minPeers,
@@ -444,6 +442,7 @@ func (s *Server) pairSessions(ctx context.Context) error {
 			}
 			ses.runs = append(ses.runs, runState{
 				allKEs:    make(chan struct{}),
+				allCTs:    make(chan struct{}),
 				allSRs:    make(chan struct{}),
 				allDCs:    make(chan struct{}),
 				allConfs:  make(chan struct{}),
@@ -584,6 +583,7 @@ func (s *session) exclude(blamed []int) error {
 
 	s.runs = append(s.runs, runState{
 		allKEs:    make(chan struct{}),
+		allCTs:    make(chan struct{}),
 		allSRs:    make(chan struct{}),
 		allDCs:    make(chan struct{}),
 		allConfs:  make(chan struct{}),
@@ -592,7 +592,7 @@ func (s *session) exclude(blamed []int) error {
 		rerunning: make(chan struct{}),
 	})
 	s.roots = nil
-	s.msgses = messages.NewSession(s.sid, s.run, s.vk)
+	s.msgses = messages.NewSession(s.sid, s.run, nil, s.vk)
 	s.br = messages.BeginRun(s.vk, s.mcounts, s.sid)
 	s.mix = mix
 
@@ -600,6 +600,8 @@ func (s *session) exclude(blamed []int) error {
 		select {
 		case c.out <- s.br:
 		case <-c.done:
+		case <-time.After(10 * time.Second):
+			log.Printf("BR timeout after peer exclusion: %#v\n", c)
 		}
 	}
 	return nil
@@ -701,6 +703,60 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	}
 	s.mu.Unlock()
 
+	// Wait for all CT messages, or CT timeout.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-st.allCTs:
+		log.Print("received all CT messages")
+	case <-time.After(recvTimeout):
+		log.Print("CT timeout")
+	}
+
+	// Broadcast received ciphertexts to each unexcluded peer.
+	s.mu.Lock()
+	for i, c := range s.clients {
+		if c.ct == nil {
+			blamed = append(blamed, i)
+			continue
+		}
+		if len(c.ct.Ciphertexts) != len(s.clients) {
+			blamed = append(blamed, i)
+			continue
+		}
+		for j := range s.clients {
+			if i == j {
+				continue
+			}
+			if s.clients[i].ct.Ciphertexts[j] == nil {
+				blamed = append(blamed, i)
+				continue
+			}
+		}
+	}
+	if len(blamed) != 0 {
+		s.mu.Unlock()
+		return blamed
+	}
+	// Encapsulated key ciphertexts are very large.  To save bandwidth,
+	// rather than broadcasting all ciphertexts to every peer, only those
+	// ciphertexts that can be decapsulated by a peer are sent to the peer.
+	cts := make([]*messages.CTs, len(s.clients))
+	for i := range s.clients {
+		cts[i] = new(messages.CTs)
+		cts[i].Ciphertexts = make([]*messages.Sntrup4591761Ciphertext, len(s.clients))
+		for j := range s.clients {
+			cts[i].Ciphertexts[j] = s.clients[j].ct.Ciphertexts[i]
+		}
+	}
+	for i, c := range s.clients {
+		select {
+		case c.out <- cts[i]:
+		case <-c.done:
+		}
+	}
+	s.mu.Unlock()
+
 	// Wait for all SR messages, or SR timeout.
 	select {
 	case <-ctx.Done():
@@ -731,6 +787,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	t := time.Now()
 	roots, err := solver.Roots(coeffs, dcnet.F)
 	if err != nil {
+		log.Printf("failed to solve roots: %v", err)
 		close(blaming)
 		s.mu.Unlock()
 		return s.blame(ctx, nil)
@@ -797,7 +854,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	log.Printf("unsigned mix: %x\n", finishedMix)
 
 	// Broadcast mix to each unexcluded peer.
-	cm := messages.ConfirmMix(s.mix)
+	cm := messages.ConfirmMix(nil, s.mix)
 	s.mu.Lock()
 	for _, c := range s.clients {
 		select {
@@ -859,7 +916,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	log.Printf("signed mix: %x\n", signedMix)
 
 	// Broadcast signed mix to each peer.
-	cm = messages.ConfirmMix(s.mix)
+	cm = messages.ConfirmMix(nil, s.mix)
 	s.mu.Lock()
 	for _, c := range s.clients {
 		select {
@@ -936,8 +993,43 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 		}
 	}
 
+	ct := new(messages.CT)
+	err := c.readDeadline(ct, recvTimeout)
+	if err != nil {
+		return fmt.Errorf("read CT: %v", err)
+	}
+
+	s.mu.Lock()
+	c.ct = ct
+	st.ctCount++
+	if st.ctCount == uint32(len(s.clients)) {
+		close(st.allCTs)
+	}
+	s.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-blaming:
+		err := c.sendDeadline(revealSecrets, sendTimeout)
+		if err != nil {
+			return err
+		}
+		return c.blame(ctx, s, run)
+	case cts := <-c.out:
+		err := c.sendDeadline(cts, sendTimeout)
+		if err != nil {
+			return err
+		}
+		select {
+		case <-rerunning:
+			return errRerun
+		default:
+		}
+	}
+
 	sr := new(messages.SR)
-	err := c.readDeadline(sr, recvTimeout)
+	err = c.readDeadline(sr, recvTimeout)
 	if err != nil {
 		return fmt.Errorf("read SR: %v", err)
 	}
@@ -1089,8 +1181,10 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 }
 
 type blame struct {
-	// ECDH
-	kx []*x25519.KX
+	prng *chacha20prng.Reader
+
+	// Key exchange keys (derived from prng)
+	kx *dcnet.KX
 
 	// Exponential slot reservation mix
 	srMsg []*big.Int // random numbers to be exponential dc-net mixed
@@ -1164,8 +1258,10 @@ func (s *session) blame(ctx context.Context, reported []int) (err error) {
 	s.mu.Lock()
 
 	b := make([]blame, len(s.clients))
+	var start int
 	starts := make([]int, 0, len(s.clients))
-	ecdh := make([]*x25519.Public, 0, s.mtot)
+	ecdh := make([]*x25519.Public, 0, len(s.clients))
+	pqPublics := make([]*dcnet.PQPublicKey, 0, len(s.clients))
 KELoop:
 	for i, c := range s.clients {
 		if c.ke == nil {
@@ -1181,6 +1277,13 @@ KELoop:
 			continue
 		}
 
+		// Blame peers whose seed is not the correct length (will panic chacha20prng).
+		if len(c.rs.Seed) != chacha20prng.SeedSize {
+			log.Printf("blaming %v for bad seed size in RS message", c.raddr())
+			blamed = append(blamed, i)
+			continue KELoop
+		}
+
 		// Blame peers with SR messages outside of the field.
 		for _, m := range c.rs.SR {
 			if !dcnet.InField(m) {
@@ -1190,27 +1293,31 @@ KELoop:
 			}
 		}
 
-		starts = append(starts, len(ecdh))
-		ecdh = append(ecdh, c.ke.ECDH...)
+		ecdh = append(ecdh, c.ke.ECDH)
+		pqPublics = append(pqPublics, c.ke.PQPK)
 		mcount := c.pr.MessageCount
-		if len(c.rs.ECDH) != mcount {
-			log.Printf("blaming %v for bad ECDH count", c.raddr())
+		starts = append(starts, start)
+		start += mcount
+		prng := chacha20prng.New(c.rs.Seed, uint32(s.run))
+		b[i].prng = prng
+		b[i].kx, err = dcnet.NewKX(prng)
+		if err != nil {
+			log.Printf("blaming %v for bad KX", c.raddr())
 			blamed = append(blamed, i)
-			continue
+			continue KELoop
 		}
-		b[i].kx = make([]*x25519.KX, 0, s.mtot)
-		for j := range c.rs.ECDH {
-			if !x25519.ValidScalar(c.rs.ECDH[j]) {
-				log.Printf("blaming %v for bad X25519 scalar", c.raddr())
-				blamed = append(blamed, i)
-				continue KELoop
-			}
 
-			b[i].kx = append(b[i].kx, &x25519.KX{
-				Public: *c.ke.ECDH[j],
-				Scalar: *c.rs.ECDH[j],
-			})
+		// Blame when public keys do not match those derived from the PRNG.
+		switch {
+		case !bytes.Equal(c.ke.ECDH[:], b[i].kx.X25519.Public[:]):
+			fallthrough
+		case !bytes.Equal(c.ke.PQPK[:], b[i].kx.PQPublic[:]):
+			log.Printf("blaming %v for KE public keys not derived from their PRNG",
+				c.raddr())
+			blamed = append(blamed, i)
+			continue KELoop
 		}
+
 		if len(c.rs.SR) != mcount || len(c.rs.M) != mcount {
 			log.Printf("blaming %v for bad message count", c.raddr())
 			blamed = append(blamed, i)
@@ -1243,11 +1350,28 @@ KELoop:
 		return blamed
 	}
 
+	cts := make([][]*messages.Sntrup4591761Ciphertext, len(s.clients))
+	for i, c := range s.clients {
+		if c.ct == nil {
+			log.Printf("blaming %v for missing messages", c.raddr())
+			blamed = append(blamed, i)
+			continue
+		}
+		cts[i] = make([]*messages.Sntrup4591761Ciphertext, len(s.clients))
+		for j := range s.clients {
+			cts[i][j] = s.clients[j].ct.Ciphertexts[i]
+		}
+	}
+	if len(blamed) > 0 {
+		return blamed
+	}
+
 SRLoop:
 	for i, c := range s.clients {
 		// Recover shared secrets
-		b[i].srKP, b[i].dcKP = dcnet.SharedKeys(b[i].kx, ecdh, s.sid, s.msize,
-			s.run, starts[i], c.pr.MessageCount)
+		kx := b[i].kx
+		b[i].srKP, b[i].dcKP, err = dcnet.SharedKeys(kx, ecdh, cts[i], s.sid, s.msize,
+			s.run, i, s.mcounts)
 
 		for j, m := range b[i].srMsg {
 			// Recover SR pads and mix with committed messages
@@ -1408,9 +1532,5 @@ func (c *client) sendDeadline(msg interface{}, deadline time.Duration) (err erro
 		return err
 	}
 	log.Printf("send(%v) %T", c.raddr(), msg)
-	err = c.enc.Encode(msg)
-	if err != nil {
-		return err
-	}
-	return c.zw.Flush()
+	return c.enc.Encode(msg)
 }
