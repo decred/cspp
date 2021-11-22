@@ -1310,6 +1310,32 @@ DCLoop:
 		return blamed
 	}
 
+	// Blame peers whose unmixed data became invalid since the initial pair
+	// request.
+	if j, ok := s.mix.(Joiner); ok {
+		// Validation occurs in parallel as it may involve high latency.
+		var mu sync.Mutex // protect concurrent appends to blamed
+		var wg sync.WaitGroup
+		wg.Add(len(s.clients))
+		for i := range s.clients {
+			i := i
+			pr := s.clients[i].pr
+			go func() {
+				err := j.ValidateUnmixed(pr.Unmixed, pr.MessageCount)
+				if err != nil {
+					mu.Lock()
+					blamed = append(blamed, i)
+					mu.Unlock()
+				}
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+	}
+	if len(blamed) > 0 {
+		return blamed
+	}
+
 	return nil
 }
 

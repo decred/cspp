@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/decred/dcrd/wire"
+	"golang.org/x/sync/errgroup"
 )
 
 var shuffleRand *mathrand.Rand
@@ -235,15 +236,21 @@ func (t *Tx) ValidateUnmixed(unmixed []byte, mcount int) error {
 		}
 		fee -= out.Value
 	}
-	for _, in := range other.TxIn {
-		if err := verifyOutput(t.c, &in.PreviousOutPoint, in.ValueIn); err != nil {
-			var e *blameError
-			if errors.As(err, &e) {
-				return errors.New(e.s)
-			}
-			return err
-		}
+	var g errgroup.Group
+	for i := range other.TxIn {
+		in := other.TxIn[i]
+		g.Go(func() error {
+			return verifyOutput(t.c, &in.PreviousOutPoint, in.ValueIn)
+		})
 		fee += in.ValueIn
+	}
+	err = g.Wait()
+	if err != nil {
+		var e *blameError
+		if errors.As(err, &e) {
+			return errors.New(e.s)
+		}
+		return err
 	}
 	fee -= int64(mcount) * t.mixValue
 	bogusMixedOut := &wire.TxOut{
@@ -275,15 +282,6 @@ func (t *Tx) Join(unmixed []byte, pid int) error {
 	for _, out := range other.TxOut {
 		if !t.sc.Match(out.PkScript, out.Version) {
 			return errors.New("coinjoin: different script class")
-		}
-	}
-	for _, in := range other.TxIn {
-		if err := verifyOutput(t.c, &in.PreviousOutPoint, in.ValueIn); err != nil {
-			var e *blameError
-			if errors.As(err, &e) {
-				e.b = []int{pid}
-			}
-			return err
 		}
 	}
 	tx := &t.Tx
