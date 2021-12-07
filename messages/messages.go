@@ -127,7 +127,7 @@ func sign(sk ed25519.PrivateKey, m Signed) []byte {
 		return nil
 	}
 	h := blake256.New()
-	m.WriteSigned(h)
+	m.writeSigned(h)
 	return ed25519.Sign(sk, h.Sum(nil))
 }
 
@@ -136,14 +136,14 @@ func verify(pk ed25519.PublicKey, m Signed, sig []byte) bool {
 		return false
 	}
 	h := blake256.New()
-	m.WriteSigned(h)
+	m.writeSigned(h)
 	return ed25519.Verify(pk, h.Sum(nil), sig)
 }
 
 // Signed indicates a session message carries an ed25519 signature that
 // must be checked.
 type Signed interface {
-	WriteSigned(w io.Writer)
+	writeSigned(w io.Writer)
 	VerifySignature(pub ed25519.PublicKey) bool
 }
 
@@ -223,7 +223,7 @@ func PairRequest(pk ed25519.PublicKey, sk ed25519.PrivateKey, commitment, unmixe
 	return pr
 }
 
-func (pr *PR) WriteSigned(w io.Writer) {
+func (pr *PR) writeSigned(w io.Writer) {
 	scratch := make([]byte, 8)
 	w.Write(msgPR)
 	writeSignedByteSlice(w, scratch, pr.Identity)
@@ -273,7 +273,7 @@ type KE struct {
 	Signature  []byte
 }
 
-func (ke *KE) WriteSigned(w io.Writer) {
+func (ke *KE) writeSigned(w io.Writer) {
 	scratch := make([]byte, 8)
 	w.Write(msgKE)
 	w.Write(putInt(scratch, ke.Run))
@@ -320,7 +320,7 @@ type CT struct {
 	Signature   []byte
 }
 
-func (ct *CT) WriteSigned(w io.Writer) {
+func (ct *CT) writeSigned(w io.Writer) {
 	scratch := make([]byte, 8)
 	w.Write(msgCT)
 	w.Write(putInt(scratch, len(ct.Ciphertexts)))
@@ -368,7 +368,7 @@ type SR struct {
 	Signature []byte
 }
 
-func (sr *SR) WriteSigned(w io.Writer) {
+func (sr *SR) writeSigned(w io.Writer) {
 	scratch := make([]byte, 8)
 	w.Write(msgSR)
 	w.Write(putInt(scratch, sr.Run))
@@ -429,7 +429,7 @@ type DC struct {
 	Signature     []byte
 }
 
-func (dc *DC) WriteSigned(w io.Writer) {
+func (dc *DC) writeSigned(w io.Writer) {
 	scratch := make([]byte, 8)
 	w.Write(msgDC)
 	w.Write(putInt(scratch, dc.Run))
@@ -470,7 +470,7 @@ type CM struct {
 	Signature     []byte
 }
 
-func (cm *CM) WriteSigned(w io.Writer) {
+func (cm *CM) writeSigned(w io.Writer) {
 	w.Write(msgCM)
 	// Only the RevealSecrets field must be signed by clients, as Mix
 	// already contains signatures, and RevealSecrets is the only other data
