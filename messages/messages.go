@@ -275,6 +275,7 @@ type KE struct {
 
 func (ke *KE) WriteSigned(w io.Writer) {
 	scratch := make([]byte, 8)
+	w.Write(msgKE)
 	w.Write(putInt(scratch, ke.Run))
 	writeSignedByteSlice(w, scratch, ke.ECDH[:])
 	writeSignedByteSlice(w, scratch, ke.PQPK[:])
