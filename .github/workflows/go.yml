@@ -19,7 +19,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libflint-dev libmpfr-dev
       - name: Install linters
-        run: "curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin v1.42.0"
+        run: "curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin v1.43.0"
       - name: Build
         env:
           GO111MODULE: "on"

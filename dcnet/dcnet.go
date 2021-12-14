@@ -252,7 +252,11 @@ func SharedKeys(kx *KX, ecdhPubs []*x25519.Public, cts []*PQCiphertext, sid []by
 			}
 
 			x25519Pub := ecdhPubs[peer]
-			sharedKey := kx.X25519.SharedKey(x25519Pub)
+			var sharedKey []byte
+			sharedKey, err = kx.X25519.SharedKey(x25519Pub)
+			if err != nil {
+				return
+			}
 			pqSharedKey, ok := sntrup4591761.Decapsulate(cts[peer], kx.PQSecret)
 			if ok != 1 {
 				err = fmt.Errorf("sntrup4591761: decapsulate failure")
