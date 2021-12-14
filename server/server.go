@@ -312,7 +312,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	var ses *session
 	ke := new(messages.KE)
 	readErr := make(chan error, 1)
-	go c.read(ke, readErr)
+	go c.read(ke, pr.Identity, readErr)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -947,7 +947,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 	if ke == nil {
 		ke = new(messages.KE)
-		err := c.readDeadline(ke, recvTimeout)
+		err := c.readDeadline(ke, c.pr.Identity, recvTimeout)
 		if err != nil {
 			return fmt.Errorf("read KE: %v", err)
 		}
@@ -994,7 +994,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 
 	ct := new(messages.CT)
-	err := c.readDeadline(ct, recvTimeout)
+	err := c.readDeadline(ct, c.pr.Identity, recvTimeout)
 	if err != nil {
 		return fmt.Errorf("read CT: %v", err)
 	}
@@ -1029,7 +1029,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 
 	sr := new(messages.SR)
-	err = c.readDeadline(sr, recvTimeout)
+	err = c.readDeadline(sr, c.pr.Identity, recvTimeout)
 	if err != nil {
 		return fmt.Errorf("read SR: %v", err)
 	}
@@ -1079,7 +1079,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 
 	dc := new(messages.DC)
-	err = c.readDeadline(dc, recvTimeout)
+	err = c.readDeadline(dc, c.pr.Identity, recvTimeout)
 	if err != nil {
 		return fmt.Errorf("read DC: %v", err)
 	}
@@ -1133,7 +1133,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 
 	cm := &messages.CM{Mix: mix}
-	err = c.readDeadline(cm, recvTimeout)
+	err = c.readDeadline(cm, c.pr.Identity, recvTimeout)
 	if err != nil {
 		return err
 	}
@@ -1467,7 +1467,7 @@ var errRerun = errors.New("rerun")
 
 func (c *client) blame(ctx context.Context, s *session, run int) error {
 	rs := new(messages.RS)
-	err := c.readDeadline(rs, recvTimeout)
+	err := c.readDeadline(rs, c.pr.Identity, recvTimeout)
 	if err != nil {
 		return err
 	}
@@ -1500,18 +1500,33 @@ func (c *client) raddr() net.Addr {
 	return c.conn.RemoteAddr()
 }
 
+var errInvalidSig = errors.New("invalid signature")
+
 // read reads a value from the gob decoder, without timeout, writing the error
 // result to ch.
-func (c *client) read(out interface{}, ch chan error) {
+func (c *client) read(out interface{}, pub ed25519.PublicKey, ch chan error) {
 	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
 		ch <- err
 		return
 	}
-	ch <- c.dec.Decode(out)
+	if err := c.dec.Decode(out); err != nil {
+		ch <- err
+		return
+	}
+	switch out := out.(type) {
+	case messages.Signed:
+		if !out.VerifySignature(pub) {
+			ch <- errInvalidSig
+			return
+		}
+	}
+
+	ch <- nil
 }
 
 // readDeadline reads a value from the decoder with a relative timeout.
-func (c *client) readDeadline(out interface{}, deadline time.Duration) (err error) {
+func (c *client) readDeadline(out interface{}, pub ed25519.PublicKey,
+	deadline time.Duration) (err error) {
 	defer func() {
 		if err != nil {
 			_, file, line, _ := runtime.Caller(2)
@@ -1523,7 +1538,17 @@ func (c *client) readDeadline(out interface{}, deadline time.Duration) (err erro
 	if err = c.conn.SetReadDeadline(time.Now().Add(deadline)); err != nil {
 		return err
 	}
-	return c.dec.Decode(out)
+	err = c.dec.Decode(out)
+	if err != nil {
+		return err
+	}
+	switch out := out.(type) {
+	case messages.Signed:
+		if !out.VerifySignature(pub) {
+			return errInvalidSig
+		}
+	}
+	return nil
 }
 
 // sendDeadline writes msg to the gob stream with a relative timeout.
