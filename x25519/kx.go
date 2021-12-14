@@ -31,16 +31,19 @@ func New(rand io.Reader) (*KX, error) {
 	kx.Scalar[31] &= 127
 	kx.Scalar[31] |= 64
 
-	curve25519.ScalarBaseMult((*[32]byte)(&kx.Public), (*[32]byte)(&kx.Scalar))
+	public, err := curve25519.X25519(kx.Scalar[:], curve25519.Basepoint)
+	if err != nil {
+		return nil, err
+	}
+	copy(kx.Public[:], public)
+
 	return kx, nil
 }
 
 // SharedKey computes a shared key with the other party from our secret value
 // and their public value.  The result should be securely hashed before usage.
-func (kx *KX) SharedKey(theirPublic *Public) []byte {
-	var sharedKey [32]byte
-	curve25519.ScalarMult(&sharedKey, (*[32]byte)(&kx.Scalar), (*[32]byte)(theirPublic))
-	return sharedKey[:]
+func (kx *KX) SharedKey(theirPublic *Public) ([]byte, error) {
+	return curve25519.X25519(kx.Scalar[:], theirPublic[:])
 }
 
 // ValidScalar returns whether a secret X25519 scalar was properly constructed.
