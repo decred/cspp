@@ -1557,5 +1557,9 @@ func (c *client) sendDeadline(msg interface{}, deadline time.Duration) (err erro
 		return err
 	}
 	log.Printf("send(%v) %T", c.raddr(), msg)
-	return c.enc.Encode(msg)
+	err = c.enc.Encode(msg)
+	if err != nil {
+		return fmt.Errorf("send(%v) %T: %w", c.raddr(), msg, err)
+	}
+	return nil
 }
