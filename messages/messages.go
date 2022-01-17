@@ -103,11 +103,11 @@ func putInt(scratch []byte, v int) []byte {
 }
 
 func writeSignedBigInt(w io.Writer, scratch []byte, bi *big.Int) {
-	bits := bi.Bits()
-	w.Write(putInt(scratch, len(bits)))
-	for i := range bits {
-		w.Write(putInt(scratch, int(bits[i])))
-	}
+	scratch[0] = byte(bi.Sign())
+	w.Write(scratch[:1])
+	b := bi.Bytes()
+	w.Write(putInt(scratch, len(b)))
+	w.Write(b)
 }
 
 func writeSlice(w io.Writer, scratch []byte, len int, write func(n int)) {
