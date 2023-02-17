@@ -75,13 +75,16 @@ func AddVectors(vs ...[]*big.Int) []*big.Int {
 }
 
 // Coefficients calculates a{0}..a{n} for the polynomial:
-//   g(x) = a{0} + a{1}x + a{2}x**2 + ... + a{n-1}x**(n-1) + a{n}x**n  (mod F)
+//
+//	g(x) = a{0} + a{1}x + a{2}x**2 + ... + a{n-1}x**(n-1) + a{n}x**n  (mod F)
+//
 // where
-//   a{n}   = -1
-//   a{n-1} = -(1/1) *    a{n}*S{0}
-//   a{n-2} = -(1/2) * (a{n-1}*S{0} +   a{n}*S{1})
-//   a{n-3} = -(1/3) * (a{n-2}*S{0} + a{n-1}*S{1} + a{n}*S{2})
-//   ...
+//
+//	a{n}   = -1
+//	a{n-1} = -(1/1) *    a{n}*S{0}
+//	a{n-2} = -(1/2) * (a{n-1}*S{0} +   a{n}*S{1})
+//	a{n-3} = -(1/3) * (a{n-2}*S{0} + a{n-1}*S{1} + a{n}*S{2})
+//	...
 //
 // The roots of this polynomial are the set of recovered messages.
 //
