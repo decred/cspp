@@ -1,43 +1,43 @@
 // Package messages implements the message types communicated between client and
 // server.  The messaging in a successful run is sequenced as follows:
 //
-//   Client | Server
-//      PR -->       Pair Request
-//                   (wait for epoch)
-//         <-- BR    Begin Run
-//      KE -->       Key Exchange
-//         <-- KEs   Server broadcasts all KE messages to all peers
-//      CT -->       Post-Quantum ciphertext exchange
-//         <-- CTs   Server broadcasts ciphertexts created by others for us
-//      SR -->       Slot Reserve
-//         <-- RM    Recovered Messages
-//      DC -->       DC-net broadcast
-//         <-- CM    Confirm Messages (unsigned)
-//      CM -->       Confirm Messages (signed)
-//                   (server joins all signatures)
-//         <-- CM    Confirm Messages (with all signatures)
+//	Client | Server
+//	   PR -->       Pair Request
+//	                (wait for epoch)
+//	      <-- BR    Begin Run
+//	   KE -->       Key Exchange
+//	      <-- KEs   Server broadcasts all KE messages to all peers
+//	   CT -->       Post-Quantum ciphertext exchange
+//	      <-- CTs   Server broadcasts ciphertexts created by others for us
+//	   SR -->       Slot Reserve
+//	      <-- RM    Recovered Messages
+//	   DC -->       DC-net broadcast
+//	      <-- CM    Confirm Messages (unsigned)
+//	   CM -->       Confirm Messages (signed)
+//	                (server joins all signatures)
+//	      <-- CM    Confirm Messages (with all signatures)
 //
 // If a peer fails to find their message after either the exponential slot
 // reservation or XOR DC-net, the DC or CM message indicates to the server that
 // blame must be assigned to remove malicious peers from the mix.  This process
 // requires secrets committed to by the KE to be revealed.
 //
-//   Client | Server
-//      PR -->       Pair Request
-//                   (wait for epoch)
-//         <-- BR    Begin Run
-//      KE -->       Key Exchange
-//         <-- KEs   Server broadcasts all KE messages to all peers
-//      CT -->       Post-Quantum ciphertext exchange
-//         <-- CTs   Server broadcasts ciphertexts created by others for us
-//      SR -->       Slot Reserve
-//         <-- RM    Recovered Messages
-//      DC -->       DC-net broadcast (with RevealSecrets=true)
-//         <-- CM    Confirm Messages (with RevealSecrets=true)
-//      RS -->       Reveal Secrets
-//                   (server discovers misbehaving peers)
-//         <-- BR    Begin Run (with removed peers)
-//         ...
+//	Client | Server
+//	   PR -->       Pair Request
+//	                (wait for epoch)
+//	      <-- BR    Begin Run
+//	   KE -->       Key Exchange
+//	      <-- KEs   Server broadcasts all KE messages to all peers
+//	   CT -->       Post-Quantum ciphertext exchange
+//	      <-- CTs   Server broadcasts ciphertexts created by others for us
+//	   SR -->       Slot Reserve
+//	      <-- RM    Recovered Messages
+//	   DC -->       DC-net broadcast (with RevealSecrets=true)
+//	      <-- CM    Confirm Messages (with RevealSecrets=true)
+//	   RS -->       Reveal Secrets
+//	                (server discovers misbehaving peers)
+//	      <-- BR    Begin Run (with removed peers)
+//	      ...
 //
 // At any point, if the server times out receiving a client message, the
 // following message contains a nonzero BR field, and a new run is performed,
