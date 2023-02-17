@@ -3,7 +3,7 @@ on: [push, pull_request]
 jobs:
   build:
     name: Go CI
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         go: ['1.19', '1.20']

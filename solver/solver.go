@@ -51,26 +51,30 @@ func Roots(a []*big.Int, F *big.Int) ([]*big.Int, error) {
 	C.free(unsafe.Pointer(cstr))
 	defer C.fmpz_clear(&mod[0])
 
+	var modctx C.fmpz_mod_ctx_t
+	C.fmpz_mod_ctx_init(&modctx[0], &mod[0])
+	defer C.fmpz_mod_ctx_clear(&modctx[0])
+
 	var poly C.fmpz_mod_poly_t
-	C.fmpz_mod_poly_init2(&poly[0], &mod[0], C.long(len(a)))
-	defer C.fmpz_mod_poly_clear(&poly[0])
+	C.fmpz_mod_poly_init2(&poly[0], C.long(len(a)), &modctx[0])
+	defer C.fmpz_mod_poly_clear(&poly[0], &modctx[0])
 	for i := range a {
 		str := a[i].Text(base)
 		cstr := C.CString(str)
 		var coeff C.fmpz_t
 		C.fmpz_init(&coeff[0])
 		C.fmpz_set_str(&coeff[0], cstr, base)
-		C.fmpz_mod_poly_set_coeff_fmpz(&poly[0], C.slong(i), &coeff[0])
+		C.fmpz_mod_poly_set_coeff_fmpz(&poly[0], C.slong(i), &coeff[0], &modctx[0])
 		C.free(unsafe.Pointer(cstr))
 		C.fmpz_clear(&coeff[0])
 	}
 
 	var factor C.fmpz_mod_poly_factor_t
-	C.fmpz_mod_poly_factor_init(&factor[0])
-	C.fmpz_mod_poly_factor_fit_length(&factor[0], C.slong(len(a)-1))
-	defer C.fmpz_mod_poly_factor_clear(&factor[0])
+	C.fmpz_mod_poly_factor_init(&factor[0], &modctx[0])
+	C.fmpz_mod_poly_factor_fit_length(&factor[0], C.slong(len(a)-1), &modctx[0])
+	defer C.fmpz_mod_poly_factor_clear(&factor[0], &modctx[0])
 
-	C.fmpz_mod_poly_factor(&factor[0], &poly[0])
+	C.fmpz_mod_poly_factor(&factor[0], &poly[0], &modctx[0])
 
 	roots := make([]*big.Int, 0, len(a)-1)
 	var m C.fmpz_t
@@ -78,7 +82,7 @@ func Roots(a []*big.Int, F *big.Int) ([]*big.Int, error) {
 	defer C.fmpz_clear(&m[0])
 	for i := C.long(0); i < factor[0].num; i++ {
 		poly := factorPoly(&factor[0], uintptr(i))
-		C.fmpz_mod_poly_get_coeff_fmpz(&m[0], poly, 0)
+		C.fmpz_mod_poly_get_coeff_fmpz(&m[0], poly, 0, &modctx[0])
 
 		cstr := C.fmpz_get_str(nil, base, &m[0])
 		str := C.GoString(cstr)
