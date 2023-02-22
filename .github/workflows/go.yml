@@ -25,5 +25,7 @@ jobs:
       - name: Lint
         run: |
           golangci-lint run --disable-all --deadline=10m --enable=gofmt --enable=gosimple --enable=unconvert --enable=ineffassign --enable=govet
+      - name: Install csppsolver
+        run: go install ./cmd/csppsolver
       - name: Test
         run: go test -v ./...
