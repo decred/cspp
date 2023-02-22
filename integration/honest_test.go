@@ -196,7 +196,7 @@ func TestHonest(t *testing.T) {
 		i := i
 		go func() {
 			input := &wire.TxIn{ValueIn: inputValue * 1e8}
-			change := &wire.TxOut{Value: 1e8 - int64(1+i)*0.001e8, PkScript: change}
+			change := &wire.TxOut{Value: 1e8 - 0.0001e8 + int64(i+1), PkScript: change}
 			con := newConfirmer(input, change)
 			conn, err := tls.Dial("tcp", s.Addr, nettest.ClientTLS)
 			if err != nil {

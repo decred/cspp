@@ -205,6 +205,23 @@ func (t *Tx) UnmarshalBinary(b []byte) error {
 	return t.Tx.Deserialize(bytes.NewReader(b))
 }
 
+var bogusSigScript = make([]byte, 108) // worst case size to redeem a P2PKH
+
+func (t *Tx) estimateSerializeSize(tx *wire.MsgTx, mcount int) int {
+	bogusMixedOut := &wire.TxOut{
+		Value:    t.mixValue,
+		Version:  t.sc.version(),
+		PkScript: make([]byte, t.sc.scriptSize()),
+	}
+	for _, in := range tx.TxIn {
+		in.SignatureScript = bogusSigScript
+	}
+	for i := 0; i < mcount; i++ {
+		tx.AddTxOut(bogusMixedOut)
+	}
+	return tx.SerializeSize()
+}
+
 func feeForSerializeSize(relayFeePerKb int64, txSerializeSize int) int64 {
 	fee := relayFeePerKb * int64(txSerializeSize) / 1000
 
@@ -218,6 +235,17 @@ func feeForSerializeSize(relayFeePerKb int64, txSerializeSize int) int64 {
 	}
 
 	return fee
+}
+
+// highFeeRate is the maximum multiplier of the standard fee rate before unmixed
+// data is refused for paying too high of a fee.  It should not be too low such
+// that mixing outputs at the smallest common mixed value errors for too high
+// fees, as these mixes are performed without any change outputs.
+const highFeeRate = 150
+
+func paysHighFees(fee, relayFeePerKb int64, txSerializeSize int) bool {
+	maxFee := feeForSerializeSize(highFeeRate*relayFeePerKb, txSerializeSize)
+	return fee > maxFee
 }
 
 func (t *Tx) ValidateUnmixed(unmixed []byte, mcount int) error {
@@ -253,18 +281,15 @@ func (t *Tx) ValidateUnmixed(unmixed []byte, mcount int) error {
 		return err
 	}
 	fee -= int64(mcount) * t.mixValue
-	bogusMixedOut := &wire.TxOut{
-		Value:    t.mixValue,
-		Version:  t.sc.version(),
-		PkScript: make([]byte, t.sc.scriptSize()),
-	}
-	for i := 0; i < mcount; i++ {
-		other.AddTxOut(bogusMixedOut)
-	}
-	requiredFee := feeForSerializeSize(t.feeRate, other.SerializeSize())
+	size := t.estimateSerializeSize(other, mcount)
+	requiredFee := feeForSerializeSize(t.feeRate, size)
 	if fee < requiredFee {
 		return errors.New("coinjoin: unmixed transaction does not pay enough network fees")
 	}
+	if paysHighFees(fee, t.feeRate, size) {
+		return errors.New("coinjoin: unmixed transaction pays insanely high fees")
+	}
+
 	return nil
 }
 
