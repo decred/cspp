@@ -46,15 +46,16 @@ type Caller interface {
 // Tx is a Decred CoinJoin transaction builder.  It is intended for usage by
 // CoinJoin servers, not clients.
 type Tx struct {
-	Tx        wire.MsgTx
-	c         Caller
-	sc        ScriptClass
-	inputPids []int
-	mixValue  int64
-	feeRate   int64
-	txVersion uint16
-	lockTime  uint32
-	expiry    uint32
+	Tx            wire.MsgTx
+	c             Caller
+	sc            ScriptClass
+	inputPids     []int
+	prevOutPoints map[wire.OutPoint]struct{}
+	mixValue      int64
+	feeRate       int64
+	txVersion     uint16
+	lockTime      uint32
+	expiry        uint32
 }
 
 type ScriptClass int
@@ -177,14 +178,15 @@ func NewTx(caller Caller, sc ScriptClass, amount, feeRate int64, txVersion uint1
 		return nil, errors.New("unknown script class")
 	}
 	tx := &Tx{
-		Tx:        wire.MsgTx{Version: txVersion},
-		c:         caller,
-		sc:        sc,
-		mixValue:  amount,
-		feeRate:   feeRate,
-		txVersion: txVersion,
-		lockTime:  lockTime,
-		expiry:    expiry,
+		Tx:            wire.MsgTx{Version: txVersion},
+		c:             caller,
+		sc:            sc,
+		prevOutPoints: make(map[wire.OutPoint]struct{}),
+		mixValue:      amount,
+		feeRate:       feeRate,
+		txVersion:     txVersion,
+		lockTime:      lockTime,
+		expiry:        expiry,
 	}
 	return tx, nil
 }
@@ -285,6 +287,16 @@ func (t *Tx) Join(unmixed []byte, pid int) error {
 		}
 	}
 	tx := &t.Tx
+	for _, in := range other.TxIn {
+		_, ok := t.prevOutPoints[in.PreviousOutPoint]
+		if ok {
+			return &blameError{
+				fmt.Sprintf("duplicate previous outpoint %v", in.PreviousOutPoint),
+				nil,
+			}
+		}
+		t.prevOutPoints[in.PreviousOutPoint] = struct{}{}
+	}
 	for _, in := range other.TxIn {
 		t.inputPids = append(t.inputPids, pid)
 		tx.TxIn = append(tx.TxIn, in)

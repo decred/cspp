@@ -684,6 +684,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 		if joiner, ok := s.mix.(Joiner); ok {
 			err := joiner.Join(c.pr.Unmixed, i)
 			if err != nil {
+				log.Printf("blaming %v for unmixed join error: %v", c.raddr(), err)
 				blamed = append(blamed, i)
 			}
 		} else if len(c.pr.Unmixed) != 0 {
