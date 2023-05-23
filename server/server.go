@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"decred.org/cspp/v2/chacha20prng"
+	"decred.org/cspp/v2/coinjoin"
 	"decred.org/cspp/v2/dcnet"
 	"decred.org/cspp/v2/messages"
 	"decred.org/cspp/v2/solver"
@@ -131,6 +132,8 @@ type session struct {
 	mu   sync.Mutex
 
 	report *json.Encoder
+
+	denom int64
 }
 
 type client struct {
@@ -425,6 +428,7 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				totalMessages += clients[i].pr.MessageCount
 			}
 			sid := s.sidPRNG.Next(32)
+			_, denom, _, _, _, _ := coinjoin.DecodeDesc(pairCommitment)
 			ses := &session{
 				sid:     sid,
 				msgses:  messages.NewSession(sid, 0, nil, vk),
@@ -439,6 +443,7 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				mcounts: mcounts,
 				pids:    pids,
 				report:  s.report,
+				denom:   denom,
 			}
 			ses.runs = append(ses.runs, runState{
 				allKEs:    make(chan struct{}),
@@ -460,21 +465,27 @@ func (s *Server) pairSessions(ctx context.Context) error {
 	}
 }
 
+func (s *session) log(format string, args ...interface{}) {
+	a := append(make([]interface{}, 0, len(args)+3), s.sid, s.run, s.denom)
+	a = append(a, args...)
+	log.Printf("sid=%x run=%d denom=%d "+format, a...)
+}
+
 func (s *session) start(ctx context.Context, wg *sync.WaitGroup) {
 	for _, c := range s.clients {
-		log.Printf("peer %x paired with session %x", c.pr.Identity, s.sid)
+		s.log("including peer %x in session", c.pr.Identity)
 		c.sesc <- s
 	}
 	run := func(i int) error {
 		defer trace.StartRegion(ctx, "run").End()
 		err := s.doRun(ctx)
-		log.Printf("session %x run %d ended: %v", s.sid, i, err)
+		s.log("run ended: %v", err)
 		return err
 	}
 	wg.Add(1)
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("recovered: %v", r)
+			s.log("recovered: %v", r)
 			debug.PrintStack()
 		}
 		for _, c := range s.clients {
@@ -489,7 +500,7 @@ func (s *session) start(ctx context.Context, wg *sync.WaitGroup) {
 		if errors.As(err, &b) {
 			err = s.exclude(b.Blame())
 			if err != nil {
-				log.Printf("cannot continue after exclusion: %v", err)
+				s.log("cannot continue after exclusion: %v", err)
 				return
 			}
 			continue
@@ -533,9 +544,9 @@ func (s *session) exclude(blamed []int) error {
 	close(s.runs[s.run].rerunning)
 	s.run++
 
-	log.Printf("excluding %v", blamed)
+	s.log("excluding %v", blamed)
 	for _, pid := range blamed {
-		log.Printf("excluding %v\n", s.clients[pid].raddr())
+		s.log("excluding %v", s.clients[pid].raddr())
 		close(s.clients[pid].blamed)
 		s.excluded = append(s.excluded, s.clients[pid])
 		s.clients[pid].cancel()
@@ -601,7 +612,7 @@ func (s *session) exclude(blamed []int) error {
 		case c.out <- s.br:
 		case <-c.done:
 		case <-time.After(10 * time.Second):
-			log.Printf("BR timeout after peer exclusion: %#v\n", c)
+			s.log("BR timeout after peer exclusion: %#v", c)
 		}
 	}
 	return nil
@@ -634,7 +645,7 @@ func (s *session) reportCompletedMix() {
 		r.Mix = m.Report()
 	}
 	if err := s.report.Encode(r); err != nil {
-		log.Printf("cannot write mix report: %v", err)
+		s.log("cannot write mix report: %v", err)
 	}
 }
 
@@ -642,7 +653,7 @@ func (s *session) abortSession(err error) {
 	defer s.mu.Unlock()
 	s.mu.Lock()
 
-	log.Printf("aborting session %x with failed blame assignment: %v", s.sid, err)
+	s.log("aborting due to failed blame assignment: %v", err)
 
 	for _, c := range s.clients {
 		c.sendDeadline(abortedSession, 500*time.Millisecond)
@@ -665,9 +676,9 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allKEs:
-		log.Print("received all KE messages")
+		s.log("received all KE messages")
 	case <-time.After(recvTimeout):
-		log.Print("KE timeout")
+		s.log("KE timeout")
 	}
 
 	// Broadcast received KEs to each unexcluded peer.
@@ -684,7 +695,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 		if joiner, ok := s.mix.(Joiner); ok {
 			err := joiner.Join(c.pr.Unmixed, i)
 			if err != nil {
-				log.Printf("blaming %v for unmixed join error: %v", c.raddr(), err)
+				s.log("blaming %v for unmixed join error: %v", c.raddr(), err)
 				blamed = append(blamed, i)
 			}
 		} else if len(c.pr.Unmixed) != 0 {
@@ -709,9 +720,9 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allCTs:
-		log.Print("received all CT messages")
+		s.log("received all CT messages")
 	case <-time.After(recvTimeout):
-		log.Print("CT timeout")
+		s.log("CT timeout")
 	}
 
 	// Broadcast received ciphertexts to each unexcluded peer.
@@ -763,9 +774,9 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allSRs:
-		log.Print("received all SR messages")
+		s.log("received all SR messages")
 	case <-time.After(recvTimeout):
-		log.Print("SR timeout")
+		s.log("SR timeout")
 	}
 
 	// Solve roots.
@@ -788,16 +799,16 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	t := time.Now()
 	roots, err := solver.Roots(coeffs, dcnet.F)
 	if err != nil {
-		log.Printf("failed to solve roots: %v", err)
+		s.log("failed to solve roots: %v", err)
 		close(blaming)
 		s.mu.Unlock()
 		return s.blame(ctx, nil)
 	}
-	log.Printf("solved roots in %v", time.Since(t))
+	s.log("solved roots in %v", time.Since(t))
 	sort.Slice(roots, func(i, j int) bool {
 		return roots[i].Cmp(roots[j]) == -1
 	})
-	log.Printf("roots: %x", roots)
+	s.log("roots: %x", roots)
 	rm := messages.RecoveredMessages(roots, s.msgses)
 	for _, c := range s.clients {
 		select {
@@ -813,9 +824,9 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allDCs:
-		log.Print("received all DC messages")
+		s.log("received all DC messages")
 	case <-time.After(recvTimeout):
-		log.Print("DC timeout")
+		s.log("DC timeout")
 	}
 
 	s.mu.Lock()
@@ -840,7 +851,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 		return s.blame(ctx, reportedFailure)
 	}
 	res := dcnet.XorVectors(dcVecs)
-	log.Printf("recovered message set %v", res)
+	s.log("recovered message set %v", res)
 
 	for i := 0; i < res.N; i++ {
 		s.mix.Mix(res.M(i))
@@ -852,7 +863,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	log.Printf("unsigned mix: %x\n", finishedMix)
+	s.log("unsigned mix: %x", finishedMix)
 
 	// Broadcast mix to each unexcluded peer.
 	cm := messages.ConfirmMix(nil, s.mix)
@@ -870,9 +881,9 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allConfs:
-		log.Print("received all CM messages")
+		s.log("received all CM messages")
 	case <-time.After(recvTimeout):
-		log.Print("CM timeout")
+		s.log("CM timeout")
 	}
 
 	s.mu.Lock()
@@ -914,7 +925,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	log.Printf("signed mix: %x\n", signedMix)
+	s.log("signed mix: %x", signedMix)
 
 	// Broadcast signed mix to each peer.
 	cm = messages.ConfirmMix(nil, s.mix)
@@ -1210,7 +1221,7 @@ func (s *session) blame(ctx context.Context, reported []int) (err error) {
 	var blamed blamePIDs
 	defer func() {
 		if len(blamed) > 0 {
-			log.Printf("blamed peers %v", []int(blamed))
+			s.log("blamed peers %v", []int(blamed))
 		}
 	}()
 
@@ -1229,7 +1240,8 @@ func (s *session) blame(ctx context.Context, reported []int) (err error) {
 					continue
 				}
 				reportedm[pid] = struct{}{}
-				log.Printf("blaming %v for false failure accusation", s.clients[pid].raddr())
+				s.log("blaming %v for false failure accusation",
+					s.clients[pid].raddr())
 				blamed = append(blamed, pid)
 			}
 			err = blamed
@@ -1247,7 +1259,7 @@ func (s *session) blame(ctx context.Context, reported []int) (err error) {
 		s.mu.Lock()
 		for i, c := range s.clients {
 			if c.rs == nil {
-				log.Printf("blaming %v for RS timeout", c.raddr())
+				s.log("blaming %v for RS timeout", c.raddr())
 				blamed = append(blamed, i)
 			}
 		}
@@ -1266,21 +1278,21 @@ func (s *session) blame(ctx context.Context, reported []int) (err error) {
 KELoop:
 	for i, c := range s.clients {
 		if c.ke == nil {
-			log.Printf("blaming %v for missing messages", c.raddr())
+			s.log("blaming %v for missing messages", c.raddr())
 			blamed = append(blamed, i)
 			continue
 		}
 
 		// Blame when revealed secrets do not match prior commitment to the secrets.
 		if cm := c.rs.Commit(s.msgses); !bytes.Equal(cm, c.ke.Commitment) {
-			log.Printf("blaming %v for false commitment", c.raddr())
+			s.log("blaming %v for false commitment", c.raddr())
 			blamed = append(blamed, i)
 			continue
 		}
 
 		// Blame peers whose seed is not the correct length (will panic chacha20prng).
 		if len(c.rs.Seed) != chacha20prng.SeedSize {
-			log.Printf("blaming %v for bad seed size in RS message", c.raddr())
+			s.log("blaming %v for bad seed size in RS message", c.raddr())
 			blamed = append(blamed, i)
 			continue KELoop
 		}
@@ -1288,7 +1300,7 @@ KELoop:
 		// Blame peers with SR messages outside of the field.
 		for _, m := range c.rs.SR {
 			if !dcnet.InField(m) {
-				log.Printf("blaming %v for SR message outside field", c.raddr())
+				s.log("blaming %v for SR message outside field", c.raddr())
 				blamed = append(blamed, i)
 				continue KELoop
 			}
@@ -1303,7 +1315,7 @@ KELoop:
 		b[i].prng = prng
 		b[i].kx, err = dcnet.NewKX(prng)
 		if err != nil {
-			log.Printf("blaming %v for bad KX", c.raddr())
+			s.log("blaming %v for bad KX", c.raddr())
 			blamed = append(blamed, i)
 			continue KELoop
 		}
@@ -1313,14 +1325,14 @@ KELoop:
 		case !bytes.Equal(c.ke.ECDH[:], b[i].kx.X25519.Public[:]):
 			fallthrough
 		case !bytes.Equal(c.ke.PQPK[:], b[i].kx.PQPublic[:]):
-			log.Printf("blaming %v for KE public keys not derived from their PRNG",
+			s.log("blaming %v for KE public keys not derived from their PRNG",
 				c.raddr())
 			blamed = append(blamed, i)
 			continue KELoop
 		}
 
 		if len(c.rs.SR) != mcount || len(c.rs.M) != mcount {
-			log.Printf("blaming %v for bad message count", c.raddr())
+			s.log("blaming %v for bad message count", c.raddr())
 			blamed = append(blamed, i)
 			continue
 		}
@@ -1342,7 +1354,7 @@ KELoop:
 	for _, pids := range shared {
 		if len(pids) > 1 {
 			for i := range pids {
-				log.Printf("blaming %v for shared SR message", s.clients[i].raddr())
+				s.log("blaming %v for shared SR message", s.clients[i].raddr())
 			}
 			blamed = append(blamed, pids...)
 		}
@@ -1354,7 +1366,7 @@ KELoop:
 	cts := make([][]*messages.Sntrup4591761Ciphertext, len(s.clients))
 	for i, c := range s.clients {
 		if c.ct == nil {
-			log.Printf("blaming %v for missing messages", c.raddr())
+			s.log("blaming %v for missing messages", c.raddr())
 			blamed = append(blamed, i)
 			continue
 		}
@@ -1382,7 +1394,7 @@ SRLoop:
 			// Blame when committed mix does not match provided.
 			for k := range srMix {
 				if srMix[k].Cmp(c.sr.DCMix[j][k]) != 0 {
-					log.Printf("blaming %v for bad SR mix", c.raddr())
+					s.log("blaming %v for bad SR mix", c.raddr())
 					blamed = append(blamed, i)
 					continue SRLoop
 				}
@@ -1404,7 +1416,7 @@ DCLoop:
 		// message, and there must be mcount DC-net vectors.
 		mcount := c.pr.MessageCount
 		if len(c.dc.DCNet) != mcount {
-			log.Printf("blaming %v for missing DC mix vectors", c.raddr())
+			s.log("blaming %v for missing DC mix vectors", c.raddr())
 			blamed = append(blamed, i)
 			continue
 		}
@@ -1424,7 +1436,7 @@ DCLoop:
 			// Blame when committed mix does not match provided.
 			for k := 0; k < dcMix.N; k++ {
 				if !dcMix.Equals(c.dc.DCNet[j]) {
-					log.Printf("blaming %v for bad DC mix", c.raddr())
+					s.log("blaming %v for bad DC mix", c.raddr())
 					blamed = append(blamed, i)
 					continue DCLoop
 				}
