@@ -419,6 +419,26 @@ func (t *Tx) Report() interface{} {
 	return r
 }
 
+// CheckLimited errors if the unmixed data and a total mixed message count results
+// in a coinjoin transaction with estimated signed transaction size exceeding
+// the mempool's standard size limits.  This makes an assumption that all inputs
+// and outputs are secp256k1 P2PKHv0.
+func (t *Tx) CheckLimited(unmixed []byte, totalMixes int) error {
+	other := new(wire.MsgTx)
+	err := other.Deserialize(bytes.NewReader(unmixed))
+	if err != nil {
+		return err
+	}
+
+	totalInputs := len(t.Tx.TxIn) + len(other.TxIn)
+	totalOutputs := len(t.Tx.TxOut) + len(other.TxOut) + totalMixes
+	if !estimateIsStandardSize(totalInputs, totalOutputs) {
+		return errors.New("coinjoin: tx size would exceed standardness rules")
+	}
+
+	return nil
+}
+
 // Blamer describes misbehaving peer IDs.
 type Blamer interface {
 	Blame() []int

@@ -59,6 +59,15 @@ type Joiner interface {
 	ValidateUnmixed(unmixed []byte, mcount int) error
 }
 
+// LimitedJoiner is a Joiner that is limited by the total size of the mix.  If
+// the unmixed data can not be added to the Joiner without exceeding these
+// limits, the peer submitting this unmixed data must be excluded from a run,
+// even though they have not acted maliciously.
+type LimitedJoiner interface {
+	Joiner
+	CheckLimited(unmixed []byte, totalMixes int) error
+}
+
 // Shuffler shuffles all values (including non-anonymous) of a mix.
 // If a Mixer implements Shuffler, all values are shuffled before confirming.
 // It is not necessary to implement Shuffler to provide mixed message anonymity.
@@ -410,24 +419,58 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				continue
 			}
 
+			// When the mix type implements LimitedJoiner, create
+			// another copy to detect limits before pairing all
+			// compatible peers.  Leave out any peers that would
+			// cause the limits to be exceeded.
+			var lj LimitedJoiner
+			var excludedClients []*client
+			switch mix.(type) {
+			case LimitedJoiner:
+				mix, _ := newm()
+				lj = mix.(LimitedJoiner)
+			}
+
 			delete(s.pairings, commitment)
+
+			sid := s.sidPRNG.Next(32)
 
 			sort.Slice(clients, func(i, j int) bool {
 				id1 := clients[i].pr.Identity[:]
 				id2 := clients[j].pr.Identity[:]
 				return bytes.Compare(id1, id2) < 0
 			})
-			vk := make([]ed25519.PublicKey, len(clients))
-			mcounts := make([]int, len(clients))
+			vk := make([]ed25519.PublicKey, 0, len(clients))
+			mcounts := make([]int, 0, len(clients))
 			pids := make(map[string]int)
 			totalMessages := 0
-			for i := range clients {
-				vk[i] = clients[i].pr.Identity
+			var i int
+			for _, c := range clients {
+				pr := c.pr
+				if lj != nil {
+					err := lj.CheckLimited(pr.Unmixed,
+						totalMessages+pr.MessageCount)
+					if err != nil {
+						log.Printf("skipping inclusion of %v "+
+							"in session %x: %v",
+							c.raddr(), sid, err)
+						excludedClients = append(excludedClients, c)
+						continue
+					}
+					lj.Join(pr.Unmixed, i)
+				}
+
+				clients[i] = c
+				vk = append(vk, pr.Identity)
+				mcounts = append(mcounts, pr.MessageCount)
+				totalMessages += pr.MessageCount
 				pids[string(vk[i])] = i
-				mcounts[i] = clients[i].pr.MessageCount
-				totalMessages += clients[i].pr.MessageCount
+				i++
 			}
-			sid := s.sidPRNG.Next(32)
+			clients = clients[:i]
+			if len(excludedClients) != 0 {
+				s.pairings[commitment] = excludedClients
+			}
 			_, denom, _, _, _, _ := coinjoin.DecodeDesc(pairCommitment)
 			ses := &session{
 				sid:     sid,
