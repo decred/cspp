@@ -468,6 +468,10 @@ func (s *Server) pairSessions(ctx context.Context) error {
 				i++
 			}
 			clients = clients[:i]
+			if len(clients) < s.minPeers {
+				s.pairings[commitment] = append(clients, excludedClients...)
+				continue
+			}
 			if len(excludedClients) != 0 {
 				s.pairings[commitment] = excludedClients
 			}
