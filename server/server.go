@@ -33,9 +33,42 @@ import (
 
 const (
 	pairTimeout = 24 * time.Hour
-	sendTimeout = time.Second
-	recvTimeout = 5 * time.Second
+	prTimeout   = 5 * time.Second
+
+	sendTimeout = 20 * time.Second
+	recvTimeout = 10 * time.Second
 )
+
+type deadlines struct {
+	recvKE  time.Time
+	sendKEs time.Time
+	recvCT  time.Time
+	sendCTs time.Time
+	recvSR  time.Time
+	sendRM  time.Time
+	recvDC  time.Time
+	sendCM  time.Time
+	recvCM  time.Time
+	sendCM2 time.Time
+}
+
+func (d *deadlines) reset(begin time.Time) {
+	t := begin
+	add := func(duration time.Duration) time.Time {
+		t = t.Add(duration)
+		return t
+	}
+	d.recvKE = add(recvTimeout)
+	d.sendKEs = add(sendTimeout)
+	d.recvCT = add(recvTimeout)
+	d.sendCTs = add(sendTimeout)
+	d.recvSR = add(recvTimeout)
+	d.sendRM = add(sendTimeout)
+	d.recvDC = add(recvTimeout)
+	d.sendCM = add(sendTimeout)
+	d.recvCM = add(recvTimeout)
+	d.sendCM2 = add(sendTimeout)
+}
 
 // Mixer is any binary-representable data which can add mixed messages and be
 // confirmed with signatures.
@@ -121,6 +154,8 @@ type runState struct {
 type session struct {
 	runs []runState
 
+	deadlines deadlines
+
 	sid    []byte
 	msgses *messages.Session
 	br     *messages.BR
@@ -146,22 +181,24 @@ type session struct {
 }
 
 type client struct {
-	conn   net.Conn
-	dec    *gob.Decoder // decodes from conn
-	enc    *gob.Encoder // encodes to conn
-	sesc   chan *session
-	pr     *messages.PR
-	ke     *messages.KE
-	ct     *messages.CT
-	sr     *messages.SR
-	dc     *messages.DC
-	cm     *messages.CM
-	rs     *messages.RS
-	mix    Mixer
-	out    chan interface{}
-	blamed chan struct{}
-	done   chan struct{}
-	cancel func()
+	conn          net.Conn
+	readDeadline  time.Time
+	writeDeadline time.Time
+	dec           *gob.Decoder // decodes from conn
+	enc           *gob.Encoder // encodes to conn
+	sesc          chan *session
+	pr            *messages.PR
+	ke            *messages.KE
+	ct            *messages.CT
+	sr            *messages.SR
+	dc            *messages.DC
+	cm            *messages.CM
+	rs            *messages.RS
+	mix           Mixer
+	out           chan interface{}
+	blamed        chan struct{}
+	done          chan struct{}
+	cancel        func()
 }
 
 // NewMixer returns a Mixer to join data with described features.
@@ -259,7 +296,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	dec := gob.NewDecoder(conn)
 	enc := gob.NewEncoder(conn)
 	pr := new(messages.PR)
-	if err := conn.SetReadDeadline(time.Now().Add(recvTimeout)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(prTimeout)); err != nil {
 		return err
 	}
 	err := dec.Decode(pr)
@@ -272,8 +309,10 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	if pr.MessageCount < 0 {
 		return errors.New("negative message count")
 	}
-	log.Printf("recv(%v) PR Identity:%x PairCommitment:%x MessageCount:%d Unmixed:%x",
-		conn.RemoteAddr(), pr.Identity, pr.PairCommitment, pr.MessageCount, pr.Unmixed)
+	_, denom, _, _, _, _ := coinjoin.DecodeDesc(pr.PairCommitment)
+	log.Printf("recv(%v) PR Identity:%x PairCommitment:%x MessageCount:%d Unmixed:%x Denom:%v",
+		conn.RemoteAddr(), pr.Identity, pr.PairCommitment, pr.MessageCount, pr.Unmixed,
+		denom)
 	mix, err := s.newm(pr.PairCommitment)
 	if err != nil {
 		return fmt.Errorf("unable to begin mix: %v", err)
@@ -299,7 +338,8 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	if j, ok := mix.(Joiner); ok {
 		err = j.ValidateUnmixed(pr.Unmixed, pr.MessageCount)
 		if err != nil {
-			c.sendDeadline(invalidUnmixed, sendTimeout)
+			c.setWriteDeadline(time.Now().Add(time.Second))
+			c.send(invalidUnmixed)
 			return err
 		}
 	} else if pr.Unmixed != nil {
@@ -324,17 +364,19 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) error {
 	var ses *session
 	ke := new(messages.KE)
 	readErr := make(chan error, 1)
-	go c.read(ke, pr.Identity, readErr)
+	go c.readCh(ke, pr.Identity, readErr)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-readErr:
 		if err == nil {
-			return fmt.Errorf("%v: read message before run started", c.conn.RemoteAddr())
+			return fmt.Errorf("%v: read message before run started",
+				c.conn.RemoteAddr())
 		}
 		return err
 	case ses = <-c.sesc:
-		err := c.sendDeadline(ses.br, sendTimeout)
+		// write deadline set by session
+		err := c.send(ses.br)
 		if err != nil {
 			return err
 		}
@@ -521,6 +563,13 @@ func (s *session) log(format string, args ...interface{}) {
 func (s *session) start(ctx context.Context, wg *sync.WaitGroup) {
 	for _, c := range s.clients {
 		s.log("including peer %x in session", c.pr.Identity)
+		// Sending the session to the client signals the client to sent
+		// the BR message and read the KE.  Set this timeout here.
+		// Since clients base their send/recv deadlines after they
+		// receive the BR, use the same deadline as for reading the KE
+		// so that the deadlines match up better.
+		c.setWriteDeadline(s.deadlines.recvKE)
+		c.setReadDeadline(s.deadlines.recvKE)
 		c.sesc <- s
 	}
 	run := func(i int) error {
@@ -540,6 +589,12 @@ func (s *session) start(ctx context.Context, wg *sync.WaitGroup) {
 		}
 		wg.Done()
 	}()
+
+	// Set first deadline schedule.  Deadlines for reruns are reset
+	// again before sending BR messages in (*session).exclude.
+	startTime := time.Now()
+	s.deadlines.reset(startTime)
+
 	for i := 0; ; i++ {
 		err := run(i)
 
@@ -654,11 +709,14 @@ func (s *session) exclude(blamed []int) error {
 	s.br = messages.BeginRun(s.vk, s.mcounts, s.sid)
 	s.mix = mix
 
+	s.deadlines.reset(time.Now())
 	for _, c := range s.clients {
+		c.setWriteDeadline(s.deadlines.recvKE)
+		c.setReadDeadline(s.deadlines.recvKE)
 		select {
 		case c.out <- s.br:
 		case <-c.done:
-		case <-time.After(10 * time.Second):
+		case <-time.After(time.Until(s.deadlines.recvKE)):
 			s.log("BR timeout after peer exclusion: %#v", c)
 		}
 	}
@@ -702,8 +760,10 @@ func (s *session) abortSession(err error) {
 
 	s.log("aborting due to failed blame assignment: %v", err)
 
+	deadline := time.Now().Add(500 * time.Millisecond)
 	for _, c := range s.clients {
-		c.sendDeadline(abortedSession, 500*time.Millisecond)
+		c.setWriteDeadline(deadline)
+		c.send(abortedSession)
 	}
 }
 
@@ -719,12 +779,15 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	st := &s.runs[s.run]
 
 	// Wait for all KE messages, or KE timeout.
+	timer := time.NewTimer(time.Until(s.deadlines.recvKE))
+	timerFired := false
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allKEs:
-		s.log("received all KE messages")
-	case <-time.After(recvTimeout):
+		s.log("finished all KE reads")
+	case <-timer.C:
+		timerFired = true
 		s.log("KE timeout")
 	}
 
@@ -755,6 +818,8 @@ func (s *session) doRun(ctx context.Context) (err error) {
 		return blamed
 	}
 	for _, c := range s.clients {
+		c.setWriteDeadline(s.deadlines.sendKEs)
+		c.setReadDeadline(s.deadlines.recvCT)
 		select {
 		case c.out <- kes:
 		case <-c.done:
@@ -763,12 +828,18 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	s.mu.Unlock()
 
 	// Wait for all CT messages, or CT timeout.
+	if !timerFired && !timer.Stop() {
+		<-timer.C
+	}
+	timerFired = false
+	timer.Reset(time.Until(s.deadlines.recvCT))
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allCTs:
-		s.log("received all CT messages")
-	case <-time.After(recvTimeout):
+		s.log("finished all CT reads")
+	case <-timer.C:
+		timerFired = true
 		s.log("CT timeout")
 	}
 
@@ -809,6 +880,8 @@ func (s *session) doRun(ctx context.Context) (err error) {
 		}
 	}
 	for i, c := range s.clients {
+		c.setWriteDeadline(s.deadlines.sendCTs)
+		c.setReadDeadline(s.deadlines.recvSR)
 		select {
 		case c.out <- cts[i]:
 		case <-c.done:
@@ -817,12 +890,18 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	s.mu.Unlock()
 
 	// Wait for all SR messages, or SR timeout.
+	if !timerFired && !timer.Stop() {
+		<-timer.C
+	}
+	timerFired = false
+	timer.Reset(time.Until(s.deadlines.recvSR))
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allSRs:
-		s.log("received all SR messages")
-	case <-time.After(recvTimeout):
+		s.log("finished all SR reads")
+	case <-timer.C:
+		timerFired = true
 		s.log("SR timeout")
 	}
 
@@ -847,6 +926,10 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	roots, err := solver.Roots(coeffs, dcnet.F)
 	if err != nil {
 		s.log("failed to solve roots: %v", err)
+		for _, c := range s.clients {
+			c.setWriteDeadline(s.deadlines.sendRM)
+			c.setReadDeadline(s.deadlines.recvDC)
+		}
 		close(blaming)
 		s.mu.Unlock()
 		return s.blame(ctx, nil)
@@ -858,6 +941,8 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	s.log("roots: %x", roots)
 	rm := messages.RecoveredMessages(roots, s.msgses)
 	for _, c := range s.clients {
+		c.setWriteDeadline(s.deadlines.sendRM)
+		c.setReadDeadline(s.deadlines.recvDC)
 		select {
 		case c.out <- rm:
 		case <-c.done:
@@ -867,12 +952,18 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	s.roots = roots
 
 	// Wait for all DC messages, or DC timeout.
+	if !timerFired && !timer.Stop() {
+		<-timer.C
+	}
+	timerFired = false
+	timer.Reset(time.Until(s.deadlines.recvDC))
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allDCs:
-		s.log("received all DC messages")
-	case <-time.After(recvTimeout):
+		s.log("finished all DC reads")
+	case <-timer.C:
+		timerFired = true
 		s.log("DC timeout")
 	}
 
@@ -888,6 +979,12 @@ func (s *session) doRun(ctx context.Context) (err error) {
 			reportedFailure = append(reportedFailure, i)
 		}
 		dcVecs = append(dcVecs, c.dc.DCNet...)
+	}
+	if len(reportedFailure) > 0 {
+		for _, c := range s.clients {
+			c.setWriteDeadline(s.deadlines.sendCM)
+			c.setReadDeadline(s.deadlines.recvCM)
+		}
 	}
 	s.mu.Unlock()
 	if len(blamed) != 0 {
@@ -916,6 +1013,8 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	cm := messages.ConfirmMix(nil, s.mix)
 	s.mu.Lock()
 	for _, c := range s.clients {
+		c.setWriteDeadline(s.deadlines.sendCM)
+		c.setReadDeadline(s.deadlines.recvCM)
 		select {
 		case c.out <- cm:
 		case <-c.done:
@@ -924,13 +1023,23 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	s.mu.Unlock()
 
 	// Wait for all confirmations, or confirmation timeout.
+	if !timerFired && !timer.Stop() {
+		<-timer.C
+	}
+	timerFired = false
+	timer.Reset(time.Until(s.deadlines.recvCM))
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-st.allConfs:
-		s.log("received all CM messages")
-	case <-time.After(recvTimeout):
+		s.log("finished all CM reads")
+	case <-timer.C:
+		timerFired = true
 		s.log("CM timeout")
+	}
+
+	if !timerFired && !timer.Stop() {
+		<-timer.C
 	}
 
 	s.mu.Lock()
@@ -948,6 +1057,10 @@ func (s *session) doRun(ctx context.Context) (err error) {
 		return blamed
 	}
 	if len(reportedFailure) > 0 {
+		for _, c := range s.clients {
+			c.setWriteDeadline(s.deadlines.sendCM2)
+			c.setReadDeadline(s.deadlines.sendCM2.Add(recvTimeout))
+		}
 		close(blaming)
 		s.mu.Unlock()
 		return s.blame(ctx, reportedFailure)
@@ -978,6 +1091,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	cm = messages.ConfirmMix(nil, s.mix)
 	s.mu.Lock()
 	for _, c := range s.clients {
+		c.setWriteDeadline(s.deadlines.sendCM2)
 		select {
 		case c.out <- cm:
 		case <-c.done:
@@ -1001,20 +1115,63 @@ var invalidUnmixed = &serverErrorCode{messages.ErrInvalidUnmixed}
 func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) error {
 	log.Printf("Performing run %d with %v", run, c.raddr())
 
+	const (
+		erroredKE = 1 + iota
+		erroredCT
+		erroredSR
+		erroredDC
+		erroredCM
+	)
+	erroredMessage := func(message int) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		st := &s.runs[run]
+
+		var count *uint32
+		var ch chan struct{}
+		switch message {
+		case erroredKE:
+			count = &st.keCount
+			ch = st.allKEs
+		case erroredCT:
+			count = &st.ctCount
+			ch = st.allCTs
+		case erroredSR:
+			count = &st.srCount
+			ch = st.allSRs
+		case erroredDC:
+			count = &st.dcCount
+			ch = st.allDCs
+		case erroredCM:
+			count = &st.confCount
+			ch = st.allConfs
+		}
+
+		*count++
+		if *count == uint32(len(s.clients)) {
+			close(ch)
+		}
+	}
+
 	if ke != nil && run != 0 {
 		panic("ke parameter must be nil on reruns")
 	}
 	if ke == nil {
 		ke = new(messages.KE)
-		err := c.readDeadline(ke, c.pr.Identity, recvTimeout)
+		// read deadline set by session
+		err := c.read(ke, c.pr.Identity)
 		if err != nil {
+			erroredMessage(erroredKE)
 			return fmt.Errorf("read KE: %v", err)
 		}
 	}
 	if len(ke.ECDH) == 0 {
+		erroredMessage(erroredKE)
 		return fmt.Errorf("invalid KE: missing ECDH")
 	}
 	if len(ke.Commitment) != 32 {
+		erroredMessage(erroredKE)
 		return fmt.Errorf("invalid KE: commitment not 32 bytes")
 	}
 
@@ -1035,13 +1192,14 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-blaming:
-		err := c.sendDeadline(revealSecrets, sendTimeout)
+		err := c.send(revealSecrets)
 		if err != nil {
 			return err
 		}
 		return c.blame(ctx, s, run)
 	case kes := <-c.out:
-		err := c.sendDeadline(kes, sendTimeout)
+		// write deadline set by session
+		err := c.send(kes)
 		if err != nil {
 			return err
 		}
@@ -1053,8 +1211,10 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 
 	ct := new(messages.CT)
-	err := c.readDeadline(ct, c.pr.Identity, recvTimeout)
+	// read deadline set by session
+	err := c.read(ct, c.pr.Identity)
 	if err != nil {
+		erroredMessage(erroredCT)
 		return fmt.Errorf("read CT: %v", err)
 	}
 
@@ -1070,13 +1230,14 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-blaming:
-		err := c.sendDeadline(revealSecrets, sendTimeout)
+		err := c.send(revealSecrets)
 		if err != nil {
 			return err
 		}
 		return c.blame(ctx, s, run)
 	case cts := <-c.out:
-		err := c.sendDeadline(cts, sendTimeout)
+		// write deadline set by session
+		err := c.send(cts)
 		if err != nil {
 			return err
 		}
@@ -1088,14 +1249,17 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 
 	sr := new(messages.SR)
-	err = c.readDeadline(sr, c.pr.Identity, recvTimeout)
+	// read deadline set by session
+	err = c.read(sr, c.pr.Identity)
 	if err != nil {
+		erroredMessage(erroredSR)
 		return fmt.Errorf("read SR: %v", err)
 	}
 
 	log.Printf("recv(%v) SR Run:%d DCMix:%x", c.raddr(), sr.Run, sr.DCMix)
 
 	if len(sr.DCMix) != c.pr.MessageCount {
+		erroredMessage(erroredSR)
 		return fmt.Errorf("invalid SR")
 	}
 
@@ -1104,6 +1268,7 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	for i := range sr.DCMix {
 		if len(sr.DCMix[i]) != mtotal {
 			s.mu.Unlock()
+			erroredMessage(erroredSR)
 			return fmt.Errorf("invalid SR")
 		}
 	}
@@ -1120,13 +1285,14 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-blaming:
-		err := c.sendDeadline(revealSecrets, sendTimeout)
+		err := c.send(revealSecrets)
 		if err != nil {
 			return err
 		}
 		return c.blame(ctx, s, run)
 	case mix := <-c.out:
-		err = c.sendDeadline(mix, sendTimeout)
+		// write deadline set by session
+		err = c.send(mix)
 		if err != nil {
 			return err
 		}
@@ -1138,18 +1304,22 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 
 	dc := new(messages.DC)
-	err = c.readDeadline(dc, c.pr.Identity, recvTimeout)
+	// read deadline set by session
+	err = c.read(dc, c.pr.Identity)
 	if err != nil {
+		erroredMessage(erroredDC)
 		return fmt.Errorf("read DC: %v", err)
 	}
 
 	log.Printf("recv(%v) DC Run:%d DCNet:%v", c.raddr(), dc.Run, dc.DCNet)
 
 	if len(dc.DCNet) != c.pr.MessageCount {
+		erroredMessage(erroredDC)
 		return fmt.Errorf("invalid DC")
 	}
 	for _, vec := range dc.DCNet {
 		if !vec.IsDim(mtotal, s.msize) {
+			erroredMessage(erroredDC)
 			return fmt.Errorf("bad dc-net dimensions")
 		}
 	}
@@ -1174,13 +1344,14 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-blaming:
-		err := c.sendDeadline(revealSecrets, sendTimeout)
+		err := c.send(revealSecrets)
 		if err != nil {
 			return err
 		}
 		return c.blame(ctx, s, run)
 	case mix := <-c.out:
-		err = c.sendDeadline(mix, sendTimeout)
+		// write deadline set by session
+		err = c.send(mix)
 		if err != nil {
 			return err
 		}
@@ -1192,8 +1363,10 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	}
 
 	cm := &messages.CM{Mix: mix}
-	err = c.readDeadline(cm, c.pr.Identity, recvTimeout)
+	// read deadline set by session
+	err = c.read(cm, c.pr.Identity)
 	if err != nil {
+		erroredMessage(erroredCM)
 		return err
 	}
 
@@ -1219,13 +1392,14 @@ func (c *client) run(ctx context.Context, run int, s *session, ke *messages.KE) 
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-blaming:
-		err := c.sendDeadline(revealSecrets, sendTimeout)
+		err := c.send(revealSecrets)
 		if err != nil {
 			return err
 		}
 		return c.blame(ctx, s, run)
 	case out := <-c.out:
-		err = c.sendDeadline(out, sendTimeout)
+		// write deadline set by session
+		err = c.send(out)
 		if err != nil {
 			return err
 		}
@@ -1527,7 +1701,7 @@ var errRerun = errors.New("rerun")
 
 func (c *client) blame(ctx context.Context, s *session, run int) error {
 	rs := new(messages.RS)
-	err := c.readDeadline(rs, c.pr.Identity, recvTimeout)
+	err := c.read(rs, c.pr.Identity)
 	if err != nil {
 		return err
 	}
@@ -1545,7 +1719,7 @@ func (c *client) blame(ctx context.Context, s *session, run int) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case msg := <-c.out:
-		err := c.sendDeadline(msg, sendTimeout)
+		err := c.send(msg)
 		if err != nil {
 			return err
 		}
@@ -1562,9 +1736,19 @@ func (c *client) raddr() net.Addr {
 
 var errInvalidSig = errors.New("invalid signature")
 
-// read reads a value from the gob decoder, without timeout, writing the error
+// setReadDeadline sets the read deadline that will be used by the next call to c.read.
+func (c *client) setReadDeadline(deadline time.Time) {
+	c.readDeadline = deadline
+}
+
+// setWriteDeadline sets the write deadline that will be used by the next call to c.send.
+func (c *client) setWriteDeadline(deadline time.Time) {
+	c.writeDeadline = deadline
+}
+
+// readCh reads a value from the gob decoder, without timeout, writing the error
 // result to ch.
-func (c *client) read(out interface{}, pub ed25519.PublicKey, ch chan error) {
+func (c *client) readCh(out interface{}, pub ed25519.PublicKey, ch chan error) {
 	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
 		ch <- err
 		return
@@ -1584,9 +1768,8 @@ func (c *client) read(out interface{}, pub ed25519.PublicKey, ch chan error) {
 	ch <- nil
 }
 
-// readDeadline reads a value from the decoder with a relative timeout.
-func (c *client) readDeadline(out interface{}, pub ed25519.PublicKey,
-	deadline time.Duration) (err error) {
+// read reads a value from the decoder with a relative timeout.
+func (c *client) read(out interface{}, pub ed25519.PublicKey) (err error) {
 	defer func() {
 		if err != nil {
 			_, file, line, _ := runtime.Caller(2)
@@ -1595,7 +1778,7 @@ func (c *client) readDeadline(out interface{}, pub ed25519.PublicKey,
 		}
 	}()
 	log.Printf("awaiting(%v) %T", c.raddr(), out)
-	if err = c.conn.SetReadDeadline(time.Now().Add(deadline)); err != nil {
+	if err = c.conn.SetReadDeadline(c.readDeadline); err != nil {
 		return err
 	}
 	err = c.dec.Decode(out)
@@ -1611,9 +1794,9 @@ func (c *client) readDeadline(out interface{}, pub ed25519.PublicKey,
 	return nil
 }
 
-// sendDeadline writes msg to the gob stream with a relative timeout.
-func (c *client) sendDeadline(msg interface{}, deadline time.Duration) (err error) {
-	if err = c.conn.SetWriteDeadline(time.Now().Add(deadline)); err != nil {
+// send writes msg to the gob stream with a relative timeout.
+func (c *client) send(msg interface{}) (err error) {
+	if err = c.conn.SetWriteDeadline(c.writeDeadline); err != nil {
 		return err
 	}
 	log.Printf("send(%v) %T", c.raddr(), msg)

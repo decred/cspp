@@ -31,8 +31,8 @@ import (
 const MessageSize = 20
 
 const (
-	sendTimeout = 5 * time.Second
-	recvTimeout = 20 * time.Second
+	sendTimeout = time.Hour
+	recvTimeout = time.Hour
 )
 
 // GenConfirmer is a generator of fresh messages to mix in a DiceMix run and a
@@ -123,7 +123,7 @@ func newClient(conn net.Conn) *client {
 	}
 }
 
-func (c *client) send(msg interface{}, timeout time.Duration) (err error) {
+func (c *client) send(msg interface{}, deadline time.Time) (err error) {
 	defer func() {
 		if err != nil {
 			_, file, line, _ := runtime.Caller(2)
@@ -131,17 +131,13 @@ func (c *client) send(msg interface{}, timeout time.Duration) (err error) {
 			err = fmt.Errorf("%v: send %T (%v:%v): %v", c.conn.LocalAddr(), msg, file, line, err)
 		}
 	}()
-	if err = c.conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+	if err = c.conn.SetWriteDeadline(deadline); err != nil {
 		return err
 	}
 	return c.enc.Encode(msg)
 }
 
-func (c *client) recv(out interface{}, timeout time.Duration) error {
-	var deadline time.Time
-	if timeout != 0 {
-		deadline = time.Now().Add(timeout)
-	}
+func (c *client) recv(out interface{}, deadline time.Time) error {
 	if err := c.conn.SetReadDeadline(deadline); err != nil {
 		return err
 	}
@@ -196,7 +192,7 @@ func (s *Session) DiceMix(ctx context.Context, conn net.Conn, genConf GenConfirm
 		return err
 	}
 	pr := messages.PairRequest(s.Pk, s.Sk, s.commitment, unmixed, s.mcount)
-	err = s.client.send(pr, sendTimeout)
+	err = s.client.send(pr, time.Now().Add(5*time.Second))
 	if err != nil {
 		s.log.Print(err)
 		return err
@@ -227,11 +223,11 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	if br == nil {
 		br = new(messages.BR)
 		readBR := make(chan error, 1)
-		var brTimeout time.Duration
+		var brDeadline time.Time
 		if n != 0 {
-			brTimeout = recvTimeout
+			brDeadline = time.Now().Add(recvTimeout)
 		}
-		go func() { readBR <- s.client.recv(br, brTimeout) }()
+		go func() { readBR <- s.client.recv(br, brDeadline) }()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -325,12 +321,12 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	// Perform key exchange
 	rs := messages.RevealSecrets(s.prngSeed, s.srMsg, s.dcMsg, ses)
 	ke := messages.KeyExchange(s.kx, rs.Commit(ses), ses)
-	err = s.client.send(ke, sendTimeout)
+	err = s.client.send(ke, time.Now().Add(sendTimeout))
 	if err != nil {
 		return err
 	}
 	var kes messages.KEs
-	err = s.client.recv(&kes, recvTimeout)
+	err = s.client.recv(&kes, time.Now().Add(recvTimeout))
 	if err != nil {
 		s.log.Print(err)
 		return err
@@ -363,12 +359,12 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 
 	// Send and receive ciphertext messages.
 	ct := messages.Ciphertexts(pqct, ses)
-	err = s.client.send(ct, sendTimeout)
+	err = s.client.send(ct, time.Now().Add(sendTimeout))
 	if err != nil {
 		return err
 	}
 	var cts messages.CTs
-	err = s.client.recv(&cts, recvTimeout)
+	err = s.client.recv(&cts, time.Now().Add(recvTimeout))
 	if err != nil {
 		return err
 	}
@@ -393,12 +389,12 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	// Broadcast message commitment and exponential DC-mix vectors for slot
 	// reservations.
 	sr := messages.SlotReserve(r.srMix, ses)
-	err = s.client.send(sr, sendTimeout)
+	err = s.client.send(sr, time.Now().Add(sendTimeout))
 	if err != nil {
 		return err
 	}
 	var rm messages.RM
-	err = s.client.recv(&rm, recvTimeout)
+	err = s.client.recv(&rm, time.Now().Add(recvTimeout))
 	if err != nil {
 		return err
 	}
@@ -438,7 +434,7 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 
 	// Broadcast and wait for exponential DC-net vectors.
 	dc := messages.DCNet(r.dcNet, ses)
-	err = s.client.send(dc, sendTimeout)
+	err = s.client.send(dc, time.Now().Add(sendTimeout))
 	if err != nil {
 		return err
 	}
@@ -446,7 +442,7 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 	// Receive mix and confirm.  Confirm must check that our mixed messages
 	// are present.
 	cm := &messages.CM{Mix: s.genConf}
-	err = s.client.recv(cm, recvTimeout)
+	err = s.client.recv(cm, time.Now().Add(recvTimeout))
 	if err == nil {
 		if len(cm.BR.Vk) != 0 {
 			return &beginRerun{&cm.BR}
@@ -465,14 +461,14 @@ func (s *Session) run(ctx context.Context, n int, br *messages.BR) error {
 		return err
 	}
 	cm = messages.ConfirmMix(s.Sk, s.genConf)
-	err = s.client.send(cm, sendTimeout)
+	err = s.client.send(cm, time.Now().Add(sendTimeout))
 	if err != nil {
 		return err
 	}
 
 	// Receive mix with merged confirmations
 	cm = &messages.CM{Mix: s.genConf}
-	err = s.client.recv(cm, recvTimeout)
+	err = s.client.recv(cm, time.Now().Add(recvTimeout))
 	if err != nil {
 		return err
 	}
@@ -509,7 +505,7 @@ func (s *Session) serverRunFail(ctx context.Context, rs *messages.RS) error {
 
 	// Reveal secrets
 	s.log.Print("server indicated run failure; revealing run secrets")
-	err := s.client.send(rs, sendTimeout)
+	err := s.client.send(rs, time.Now().Add(sendTimeout))
 	if err != nil {
 		return err
 	}
@@ -523,15 +519,17 @@ func (s *Session) clientRunFail(ctx context.Context, rs *messages.RS) error {
 	}
 	s.freshGen = true
 
+	rsDeadline := time.Now().Add(sendTimeout)
+
 	// Inform server of client-detected failure
-	err := s.client.send(runFailed, sendTimeout)
+	err := s.client.send(runFailed, rsDeadline)
 	if err != nil {
 		return err
 	}
 
 	// Reveal secrets
 	s.log.Print("revealing run secrets")
-	err = s.client.send(rs, sendTimeout)
+	err = s.client.send(rs, rsDeadline)
 	if err != nil {
 		return err
 	}
