@@ -70,6 +70,13 @@ func startSolver() {
 	})
 }
 
+// StartSolver starts the solver's background process.  This can be used to
+// detect errors starting the solver process before the first call to Roots.
+func StartSolver() error {
+	once.Do(startSolver)
+	return onceErr
+}
+
 type repeatedRoot big.Int
 
 func (r *repeatedRoot) Error() string          { return "repeated roots" }
@@ -78,9 +85,8 @@ func (r *repeatedRoot) RepeatedRoot() *big.Int { return (*big.Int)(r) }
 // Roots solves for len(a)-1 roots of the polynomial with coefficients a (mod F).
 // Repeated roots are considered an error for the purposes of unique slot assignment.
 func Roots(a []*big.Int, F *big.Int) ([]*big.Int, error) {
-	once.Do(startSolver)
-	if onceErr != nil {
-		return nil, onceErr
+	if err := StartSolver(); err != nil {
+		return nil, err
 	}
 
 	var args struct {
