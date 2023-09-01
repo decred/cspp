@@ -311,7 +311,8 @@ func verifyOutput(c Caller, outpoint *wire.OutPoint, value int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 	var res struct {
-		Value float64 `json:"value"`
+		Value         float64 `json:"value"`
+		Confirmations int64   `json:"confirmations"`
 	}
 	err := c.Call(ctx, "gettxout", &res, outpoint.Hash.String(), outpoint.Index, outpoint.Tree)
 	if err != nil {
@@ -320,6 +321,12 @@ func verifyOutput(c Caller, outpoint *wire.OutPoint, value int64) error {
 	if v := atoms(res.Value); v != value {
 		return &blameError{
 			fmt.Sprintf("output %v has wrong value %d (expected %d)", outpoint, value, v),
+			nil,
+		}
+	}
+	if res.Confirmations <= 0 {
+		return &blameError{
+			fmt.Sprintf("output %v has not been confirmed", outpoint),
 			nil,
 		}
 	}
