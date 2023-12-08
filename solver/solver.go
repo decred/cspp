@@ -5,7 +5,10 @@ package solver
 #cgo LDFLAGS: -L/usr/local/lib -lflint -lmpfr -lgmp -lm
 #include <stdlib.h>
 #include <flint/flint.h>
+#include <flint/fmpz.h>
+#include <flint/fmpz_mod.h>
 #include <flint/fmpz_mod_poly.h>
+#include <flint/fmpz_mod_poly_factor.h>
 */
 import "C"
 import (
