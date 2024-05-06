@@ -39,7 +39,7 @@ var inputValueJSON []byte
 func TestMain(m *testing.M) {
 	flag.Parse()
 	inputValue = int64(*mFlag) + 1
-	inputValueJSON = []byte(fmt.Sprintf(`{"value":%v}`, inputValue))
+	inputValueJSON = []byte(fmt.Sprintf(`{"value":%v,"confirmations":1}`, inputValue))
 	os.Exit(m.Run())
 }
 
