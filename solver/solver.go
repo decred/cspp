@@ -35,16 +35,12 @@ func factorPoly(fac *C.fmpz_mod_poly_factor_struct, i uintptr) *C.fmpz_mod_poly_
 	return (*C.fmpz_mod_poly_struct)(unsafe.Pointer(uintptr(unsafe.Pointer(fac.poly)) + i*C.sizeof_fmpz_mod_poly_struct))
 }
 
-type repeatedRoot big.Int
-
-func (r *repeatedRoot) Error() string          { return "repeated roots" }
-func (r *repeatedRoot) RepeatedRoot() *big.Int { return (*big.Int)(r) }
-
-// Roots solves for len(a)-1 roots of the polynomial with coefficients a (mod F).
-// Repeated roots are considered an error for the purposes of unique slot assignment.
-func Roots(a []*big.Int, F *big.Int) ([]*big.Int, error) {
+// RootFactors returns the roots and their number of solutions in the
+// factorized polynomial.  Repeated roots are an error in the mixing protocol
+// but unlike the Roots function are not returned as an error here.
+func RootFactors(a []*big.Int, F *big.Int) ([]*big.Int, []int, error) {
 	if len(a) < 2 {
-		return nil, errors.New("too few coefficients")
+		return nil, nil, errors.New("too few coefficients")
 	}
 
 	var mod C.fmpz_t
@@ -80,6 +76,7 @@ func Roots(a []*big.Int, F *big.Int) ([]*big.Int, error) {
 	C.fmpz_mod_poly_factor(&factor[0], &poly[0], &modctx[0])
 
 	roots := make([]*big.Int, 0, len(a)-1)
+	exps := make([]int, 0, len(a)-1)
 	var m C.fmpz_t
 	C.fmpz_init(&m[0])
 	defer C.fmpz_clear(&m[0])
@@ -93,19 +90,36 @@ func Roots(a []*big.Int, F *big.Int) ([]*big.Int, error) {
 
 		b, ok := new(big.Int).SetString(str, base)
 		if !ok {
-			return nil, errors.New("failed to read fmpz")
+			return nil, nil, errors.New("failed to read fmpz")
 		}
 		b.Neg(b)
 		b.Mod(b, F)
 
-		if factorExp(&factor[0], uintptr(i)) != 1 {
-			return nil, (*repeatedRoot)(b)
-		}
 		roots = append(roots, b)
+		exps = append(exps, int(factorExp(&factor[0], uintptr(i))))
 	}
 
-	if len(roots) != len(a)-1 {
-		return nil, errors.New("too few roots")
+	return roots, exps, nil
+}
+
+type repeatedRoot big.Int
+
+func (r *repeatedRoot) Error() string          { return "repeated roots" }
+func (r *repeatedRoot) RepeatedRoot() *big.Int { return (*big.Int)(r) }
+
+// Roots solves for len(a)-1 roots of the polynomial with coefficients a (mod F).
+// Repeated roots are considered an error for the purposes of unique slot
+// assignment, and an error with method RepeatedRoot() *big.Int is returned.
+func Roots(a []*big.Int, F *big.Int) ([]*big.Int, error) {
+	roots, exps, err := RootFactors(a, F)
+	if err != nil {
+		return roots, err
+	}
+
+	for i, exp := range exps {
+		if exp != 1 {
+			return nil, (*repeatedRoot)(roots[i])
+		}
 	}
 
 	return roots, nil

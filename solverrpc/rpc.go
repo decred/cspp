@@ -77,6 +77,31 @@ func StartSolver() error {
 	return onceErr
 }
 
+// RootFactors returns the roots and their number of solutions in the
+// factorized polynomial.  Repeated roots are an error in the mixing protocol
+// but unlike the Roots function are not returned as an error here.
+func RootFactors(a []*big.Int, F *big.Int) ([]*big.Int, []int, error) {
+	if err := StartSolver(); err != nil {
+		return nil, nil, err
+	}
+
+	var args struct {
+		A []*big.Int
+		F *big.Int
+	}
+	args.A = a
+	args.F = F
+	var result struct {
+		Roots     []*big.Int
+		Exponents []int
+	}
+	err := client.Call("Solver.RootFactors", args, &result)
+	if err != nil {
+		return nil, nil, err
+	}
+	return result.Roots, result.Exponents, nil
+}
+
 type repeatedRoot big.Int
 
 func (r *repeatedRoot) Error() string          { return "repeated roots" }

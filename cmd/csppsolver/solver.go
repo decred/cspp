@@ -36,7 +36,18 @@ type Args struct {
 
 type Result struct {
 	Roots        []*big.Int
+	Exponents    []int
 	RepeatedRoot *big.Int
+}
+
+func (*Solver) RootFactors(args Args, res *Result) error {
+	roots, exps, err := solver.RootFactors(args.A, args.F)
+	if err != nil {
+		return err
+	}
+	res.Roots = roots
+	res.Exponents = exps
+	return nil
 }
 
 type repeatedRoot interface {
@@ -44,15 +55,19 @@ type repeatedRoot interface {
 }
 
 func (*Solver) Roots(args Args, res *Result) error {
-	roots, err := solver.Roots(args.A, args.F)
-	if rr, ok := err.(repeatedRoot); ok {
-		res.RepeatedRoot = rr.RepeatedRoot()
-		return nil // error set by client package
-	}
+	roots, exps, err := solver.RootFactors(args.A, args.F)
 	if err != nil {
 		return err
 	}
+	for i, exp := range exps {
+		if exp != 1 {
+			res.RepeatedRoot = roots[i]
+			return nil // error set by client package
+		}
+	}
+
 	res.Roots = roots
+	res.Exponents = exps
 	return nil
 }
 

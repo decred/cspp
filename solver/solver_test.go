@@ -429,6 +429,33 @@ func TestRoots(t *testing.T) {
 	}
 }
 
+func TestRootFactors(t *testing.T) {
+	for i := range tests {
+		roots, exps, err := RootFactors(tests[i].coeffs, tests[i].field)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		for i, exp := range exps {
+			if exp != 1 {
+				t.Errorf("repeated root %v at index %v", roots[i], i)
+				continue
+			}
+		}
+		if len(roots) != len(tests[i].messages) {
+			t.Error("wrong root count")
+			continue
+		}
+		sortBig(tests[i].messages)
+		sortBig(roots)
+		for j := range roots {
+			if roots[j].Cmp(tests[i].messages[j]) != 0 {
+				t.Error("recovered wrong message")
+			}
+		}
+	}
+}
+
 func BenchmarkRoots(b *testing.B) {
 	for i := range tests {
 		b.Run(fmt.Sprintf("%d", tests[i].n), func(b *testing.B) {
