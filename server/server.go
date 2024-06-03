@@ -25,7 +25,7 @@ import (
 	"decred.org/cspp/v2/coinjoin"
 	"decred.org/cspp/v2/dcnet"
 	"decred.org/cspp/v2/messages"
-	"decred.org/cspp/v2/solver"
+	"decred.org/cspp/v2/solverrpc"
 	"decred.org/cspp/v2/x25519"
 	"golang.org/x/crypto/ed25519"
 	"golang.org/x/sync/errgroup"
@@ -923,7 +923,7 @@ func (s *session) doRun(ctx context.Context) (err error) {
 	powerSums := dcnet.AddVectors(vs...)
 	coeffs := dcnet.Coefficients(powerSums)
 	t := time.Now()
-	roots, err := solver.Roots(coeffs, dcnet.F)
+	roots, err := solverrpc.Roots(coeffs, dcnet.F)
 	if err != nil {
 		s.log("failed to solve roots: %v", err)
 		for _, c := range s.clients {
