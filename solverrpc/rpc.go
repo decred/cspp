@@ -1,6 +1,7 @@
 package solverrpc
 
 import (
+	"errors"
 	"io"
 	"math/big"
 	"net/rpc"
@@ -12,6 +13,10 @@ import (
 // handle the solving of polynomial roots.  This may be changed before calling
 // Roots if the process is named differently or if an absolute path is needed.
 var SolverProcess = "csppsolver"
+
+// ErrSolverProcessExited indicates that the solver process was started, but
+// has since exited (possibly due to a crash, or a signal which killed it).
+var ErrSolverProcessExited = errors.New("solver process exited")
 
 type solverProcess struct {
 	cmd    *exec.Cmd
@@ -44,6 +49,7 @@ var (
 	once    sync.Once
 	onceErr error
 	client  *rpc.Client
+	cmdDone = make(chan struct{})
 )
 
 func startSolver() {
@@ -68,6 +74,19 @@ func startSolver() {
 		stdin:  stdin,
 		stdout: stdout,
 	})
+	go func() {
+		cmd.Wait()
+		close(cmdDone)
+	}()
+}
+
+func checkExit() error {
+	select {
+	case <-cmdDone:
+		return ErrSolverProcessExited
+	default:
+		return nil
+	}
 }
 
 // StartSolver starts the solver's background process.  This can be used to
@@ -85,6 +104,10 @@ func RootFactors(a []*big.Int, F *big.Int) ([]*big.Int, []int, error) {
 		return nil, nil, err
 	}
 
+	if err := checkExit(); err != nil {
+		return nil, nil, err
+	}
+
 	var args struct {
 		A []*big.Int
 		F *big.Int
@@ -97,6 +120,9 @@ func RootFactors(a []*big.Int, F *big.Int) ([]*big.Int, []int, error) {
 	}
 	err := client.Call("Solver.RootFactors", args, &result)
 	if err != nil {
+		if exitErr := checkExit(); exitErr != nil {
+			err = exitErr
+		}
 		return nil, nil, err
 	}
 	return result.Roots, result.Exponents, nil
@@ -114,6 +140,10 @@ func Roots(a []*big.Int, F *big.Int) ([]*big.Int, error) {
 		return nil, err
 	}
 
+	if err := checkExit(); err != nil {
+		return nil, err
+	}
+
 	var args struct {
 		A []*big.Int
 		F *big.Int
@@ -126,6 +156,9 @@ func Roots(a []*big.Int, F *big.Int) ([]*big.Int, error) {
 	}
 	err := client.Call("Solver.Roots", args, &result)
 	if err != nil {
+		if exitErr := checkExit(); exitErr != nil {
+			err = exitErr
+		}
 		return nil, err
 	}
 	if result.RepeatedRoot != nil {
