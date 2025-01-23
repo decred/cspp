@@ -4,6 +4,8 @@ import (
 	"math/big"
 	"net/rpc"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"decred.org/cspp/v2/solver"
 )
@@ -72,6 +74,13 @@ func (*Solver) Roots(args Args, res *Result) error {
 }
 
 func main() {
+	// Ignore SIGINT and other clean shutdown signals (and Windows
+	// equivalents).  When csppsolver is in the same process group as
+	// dcrwallet, it must continue running for any ongoing mixes even
+	// after shutdown is signaled.  It will eventually exit later after
+	// the stdin pipe is closed.
+	signal.Ignore(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+
 	s := rpc.NewServer()
 	err := s.Register(new(Solver))
 	if err != nil {
